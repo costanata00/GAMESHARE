@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src 'self' https: wss: http: ws:;">
+  <title>GameShare</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ===== Lobby ===== -->
+  <section id="lobby" class="view">
+    <div class="lobby-card">
+      <div class="brand">
+        <div class="logo" aria-hidden="true"><span></span><span></span><span></span></div>
+        <h1>GameShare</h1>
+      </div>
+      <p class="tagline">Talk and watch each other play. Straight from PC to PC, up to 10 players.</p>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="nameInput" maxlength="24" autocomplete="off" placeholder="e.g. Nata">
+      </label>
+
+      <div class="field size-field">
+        <span id="sizeLabel">Room size</span>
+        <div class="size-row">
+          <div id="sizePicker" class="size-picker" role="group" aria-labelledby="sizeLabel"></div>
+          <output id="sizeValue" class="size-value">4 players</output>
+        </div>
+      </div>
+
+      <button id="createBtn" class="btn primary big">Create a room</button>
+
+      <div class="divider"><span>or join a friend</span></div>
+
+      <div class="join-row">
+        <input id="codeInput" class="code-input" maxlength="6" autocomplete="off" spellcheck="false" placeholder="Room code" aria-label="Room code">
+        <button id="joinBtn" class="btn">Join</button>
+      </div>
+
+      <button id="rejoinBtn" class="rejoin hidden" type="button">
+        <span class="i i-rejoin" aria-hidden="true"></span>
+        <span>Rejoin room <b></b></span>
+      </button>
+
+      <p id="lobbyStatus" class="status" role="status"></p>
+      <div id="lobbyVersion" class="lobby-version"></div>
+    </div>
+  </section>
+
+  <!-- ===== Room ===== -->
+  <section id="room" class="view hidden">
+    <aside id="panel" class="panel" aria-label="Room">
+      <div class="panel-top">
+        <div class="brandmark"><div class="logo small" aria-hidden="true"><span></span><span></span><span></span></div><span class="brand-name">GameShare</span></div>
+        <button id="peopleToggle" class="icon-btn" aria-pressed="true" title="Collapse the panel (Ctrl+Shift+P)">
+          <span class="i i-collapse-panel" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="room-card">
+        <div id="roomCode" class="room-code" title="Room code">------</div>
+        <div class="room-meta">
+          <div id="slots" class="slots" aria-hidden="true"></div>
+          <span id="peopleCount" class="slot-count" title="Players in the room / room size">1/4</span>
+        </div>
+        <button id="copyBtn" class="copy-btn" title="Copy an invite with the room code">
+          <span class="i i-copy" aria-hidden="true"></span><span class="copy-text">Copy invite</span>
+        </button>
+      </div>
+
+      <div id="netBadge" class="net-status" role="status">Connecting…</div>
+
+      <ul id="peopleList" class="roster" aria-label="Players"></ul>
+
+      <div class="panel-foot">
+        <button id="shareBtn" class="share-btn" title="Share your screen">
+          <span class="i i-screen" aria-hidden="true"></span><span class="ctrl-label">Share screen</span>
+        </button>
+        <div class="dock">
+          <button id="micBtn" class="dock-btn" aria-pressed="false" title="Mute (Ctrl+Shift+M)">
+            <span class="i i-mic" aria-hidden="true"></span><span class="ctrl-label">Mute</span>
+          </button>
+          <button id="deafenBtn" class="dock-btn" aria-pressed="false" title="Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)">
+            <span class="i i-headphones" aria-hidden="true"></span><span class="ctrl-label">Mute voices</span>
+          </button>
+          <button id="settingsBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Settings">
+            <span class="i i-gear" aria-hidden="true"></span>
+          </button>
+          <button id="leaveBtn" class="dock-btn danger" title="Leave the room">
+            <span class="i i-leave" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <div id="settingsMenu" class="menu hidden" role="dialog" aria-label="Settings">
+          <div class="menu-group">Voice</div>
+          <div class="menu-row stack">
+            <label class="menu-text" for="micSelect"><b>Microphone</b></label>
+            <select id="micSelect"></select>
+            <div class="mic-meter" title="Talk to test your microphone"><i id="micLevel"></i></div>
+          </div>
+          <div class="menu-row stack">
+            <label class="menu-text" for="outSelect"><b>Speakers or headset</b><small>Where friends’ voices and their streams play</small></label>
+            <select id="outSelect"></select>
+          </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Remove background noise</b><small>Filters out keyboard, fans and game sound picked up by your mic</small></span>
+            <button id="noiseBtn" class="switch" role="switch" aria-checked="true" aria-label="Remove background noise"></button>
+          </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Headphones mode</b><small>Clearer voice with echo cancellation off. Only with headphones.</small></span>
+            <button id="headphonesBtn" class="switch" role="switch" aria-checked="false" aria-label="Headphones mode"></button>
+          </div>
+
+          <div class="menu-group">Room</div>
+          <div class="menu-row" id="sizeRow">
+            <span class="menu-text"><b>Room size</b><small id="sizeHint">How many players can be in this room</small></span>
+            <div class="stepper" id="sizeStepper">
+              <button id="sizeDown" class="step" aria-label="Fewer players">−</button>
+              <output id="sizeNow">4</output>
+              <button id="sizeUp" class="step" aria-label="More players">+</button>
+            </div>
+          </div>
+
+          <div class="menu-group">Sharing</div>
+          <label class="menu-row">
+            <span class="menu-text"><b>Share quality</b><small>For your own screen. Stays smooth when your PC or connection is busy.</small></span>
+            <select id="qualitySelect">
+              <option value="720p30">720p, 30 fps</option>
+              <option value="1080p30">1080p, 30 fps</option>
+              <option value="1080p60">1080p, 60 fps</option>
+            </select>
+          </label>
+
+          <div class="menu-group">App</div>
+          <div class="menu-row">
+            <span class="menu-text"><b>In-game overlay</b><small>Shows who’s talking on top of your game. Works with borderless and windowed games.</small></span>
+            <button id="overlayBtn" class="switch" role="switch" aria-checked="false" aria-label="In-game overlay"></button>
+          </div>
+          <label class="menu-row" id="overlayCornerRow">
+            <span class="menu-text"><b>Overlay corner</b></span>
+            <select id="overlayCorner">
+              <option value="top left">Top left</option>
+              <option value="top right">Top right</option>
+              <option value="bottom left">Bottom left</option>
+              <option value="bottom right">Bottom right</option>
+            </select>
+          </label>
+          <div class="menu-row">
+            <span class="menu-text"><b>Sound effects</b><small>Joins, leaves, shares and mute</small></span>
+            <button id="soundsBtn" class="switch" role="switch" aria-checked="true" aria-label="Sound effects"></button>
+          </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Shortcuts work in games</b><small>Mute keys work while a game has focus. Turn off if they clash with another app.</small></span>
+            <button id="globalKeysBtn" class="switch" role="switch" aria-checked="true" aria-label="Shortcuts work in games"></button>
+          </div>
+          <div class="menu-note">
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd> mute</div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd> mute voices</div>
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd> collapse the panel</div>
+          </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Something not working?</b><small>Copies a report on your connection, devices and settings to paste to whoever helps you. Screens also have a Stats button.</small></span>
+            <button id="diagBtn" class="btn menu-btn">Copy report</button>
+          </div>
+          <div id="menuVersion" class="menu-foot"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main id="stage" class="stage">
+      <div id="emptyStage" class="empty">
+        <div id="emptyInvite" class="invite">
+          <h2>Waiting for friends</h2>
+          <p>They join with this code.</p>
+          <button id="inviteCode" class="invite-code" title="Copy an invite with the room code">
+            <span id="inviteCodeText">------</span>
+          </button>
+          <button id="inviteCopy" class="btn">Copy invite</button>
+        </div>
+        <div id="emptyIdle" class="party hidden">
+          <div id="partyGrid" class="party-grid"></div>
+          <p class="party-hint">No one is sharing yet. Press Share screen to show your game.</p>
+        </div>
+      </div>
+    </main>
+
+    <div id="personMenu" class="pop hidden" role="dialog" aria-label="Player options">
+      <div class="pop-head">
+        <div class="avatar pop-avatar"></div>
+        <div class="pop-who"><b class="pop-name"></b><small class="pop-sub"></small></div>
+      </div>
+      <label class="pop-row pop-vol-row">
+        <span>Voice volume</span>
+        <input type="range" class="vol pop-vol" min="0" max="100" value="100">
+      </label>
+      <div class="pop-row">
+        <span>Mute their voice for me</span>
+        <button class="switch pop-mute" role="switch" aria-checked="false" aria-label="Mute their voice for me"></button>
+      </div>
+      <button class="btn pop-watch hidden">Watch screen</button>
+      <div class="pop-net"></div>
+    </div>
+  </section>
+
+  <!-- ===== Source picker ===== -->
+  <div id="picker" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="pickerTitle">What do you want to share?</h2>
+        <div class="tabs" role="tablist">
+          <button class="tab active" role="tab" data-kind="window">Windows</button>
+          <button class="tab" role="tab" data-kind="screen">Screens</button>
+        </div>
+      </div>
+      <div id="sourceGrid" class="source-grid"></div>
+      <div class="modal-foot">
+        <label id="audioOpt" class="check hidden">
+          <input type="checkbox" id="audioCheck" class="switch-input">
+          <span class="switch-ui" aria-hidden="true"></span>
+          <span id="audioOptText">Share this app’s sound <small>Only the window you pick. Never your call.</small></span>
+        </label>
+        <div class="spacer"></div>
+        <button id="pickerRefresh" class="btn ghost" title="Look for windows again">Refresh</button>
+        <button id="pickerCancel" class="btn ghost">Cancel</button>
+        <button id="pickerGo" class="btn primary" disabled title="Share (Enter)">Share</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="node_modules/peerjs/dist/peerjs.min.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
