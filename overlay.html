@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self';">
+  <title>GameShare overlay</title>
+  <style>
+    @font-face { font-family: "Archivo"; src: url("fonts/archivo.woff2") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }
+    html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; }
+    body { font: 600 14px/1.2 "Archivo", "Segoe UI", system-ui, sans-serif; color: #eceef3; -webkit-font-smoothing: antialiased; }
+    #list { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
+    body.right #list { align-items: flex-end; }
+    body.bottom #list { flex-direction: column-reverse; height: calc(100vh - 8px); }
+    .pill {
+      --pc: #9a9dab;
+      display: inline-flex; align-items: center; gap: 8px; max-width: 280px;
+      padding: 4px 12px 4px 4px; border-radius: 999px;
+      background: rgba(16, 17, 20, .82); box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 4px 14px rgba(0,0,0,.35);
+      animation: in .16s ease-out;
+    }
+    .pill .av {
+      width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center;
+      background: var(--pc); color: #111318; font-size: 11px; font-weight: 800;
+      box-shadow: 0 0 0 2px rgba(16,17,20,.9), 0 0 0 4px var(--pc);
+    }
+    .pill .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pill.warn { padding-left: 10px; color: #ffb3bc; }
+    .pill.warn .ic { width: 16px; height: 16px; background: #ff4d5e; -webkit-mask: center / contain no-repeat; }
+    .ic.mic { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3.3 2.3a1 1 0 0 0-1.4 1.4l18 18a1 1 0 0 0 1.4-1.4l-4.1-4.1A6.96 6.96 0 0 0 19 12a1 1 0 1 0-2 0c0 .99-.29 1.92-.79 2.7l-1.48-1.48c.17-.38.27-.79.27-1.22V6a3 3 0 0 0-5.9-.77L3.3 2.3ZM9 11.24V12a3 3 0 0 0 3.76 2.9L9 11.24Zm-2 .76a1 1 0 1 0-2 0 7 7 0 0 0 6 6.93V21H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2.07c.6-.09 1.17-.25 1.71-.48l-1.56-1.56A5 5 0 0 1 7 12Z'/%3E%3C/svg%3E"); }
+    .ic.deaf { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3.3 2.3a1 1 0 0 0-1.4 1.4l18 18a1 1 0 0 0 1.4-1.4l-1.5-1.5c.13-.3.2-.64.2-.99v-6a9 9 0 0 0-14.3-7.3l-.97-.97L3.3 2.3ZM6.1 5.1A7 7 0 0 1 19 12v1h-2a2 2 0 0 0-1.6.8L6.1 5.1ZM3.6 8.1A8.96 8.96 0 0 0 3 12v6a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2H5v-1c0-.86.16-1.69.44-2.45L3.6 8.1Z'/%3E%3C/svg%3E"); }
+    @keyframes in { from { opacity: 0; transform: translateY(-3px); } }
+    @media (prefers-reduced-motion: reduce) { .pill { animation: none; } }
+  </style>
+</head>
+<body>
+  <div id="list"></div>
+  <script src="overlay.js"></script>
+</body>
+</html>
