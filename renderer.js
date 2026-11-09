@@ -25,12 +25,13 @@ const MAX_LIMIT = 10, MIN_SIZE = 2, DEFAULT_SIZE = 4;
 const PLAYER_COLORS = ['#ff6b5b', '#4ea8ff', '#ffc93d', '#3ddc97', '#b98cff', '#ff9447', '#3fd8e6', '#ff75b5', '#a6e35a', '#e0c9a0'];
 const ROOM_PREFIX = 'gameshare-v1-room-';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-// Pull a room code out of pasted text such as "Join me on GameShare! Room code: AB3CDE".
+// Pull a room code out of pasted text such as "Join me on GameShare! Room code: AB3CDE"
+// (or the Portuguese invite, "Código da sala: AB3CDE").
 // Only whole 6-character words count, so "GAMESHARE" is never mistaken for a code.
 function findCode(text) {
   const t = String(text || '').toUpperCase();
   const C = '[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}';
-  const labelled = new RegExp(`(?:CODE|ROOM)\\W{0,3}(${C})(?![A-Z0-9])`).exec(t);
+  const labelled = new RegExp(`(?:CODE|ROOM|SALA|C[OÓ]DIGO)\\W{0,3}(${C})(?![A-Z0-9])`).exec(t);
   if (labelled) return labelled[1];
   const words = t.match(new RegExp(`(?<![A-Z0-9])${C}(?![A-Z0-9])`, 'g')) || [];
   return words.find((w) => /\d/.test(w)) || words[words.length - 1] || null;
@@ -79,7 +80,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false };
+              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto' };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -326,6 +327,7 @@ function pushOverlay() {
   const on = prefs.overlay === true && document.body.dataset.view === 'room';
   const st = on ? {
     me: { muted: state.muted, deafened: state.deafened },
+    labels: { muted: tr('You’re muted'), deafened: tr('Voices muted') },
     talking: state.deafened ? [] : [...state.peers.values()]
       .filter((p) => p.greeted && !p.localMuted && isSpeaking(p.id))
       .map((p) => ({ key: p.id, name: p.name, color: colorOf(p.id) }))
@@ -434,6 +436,17 @@ function screenSdp(sdp) {
 
 const appAudio = { supported: false, ctx: null, node: null, track: null, info: null };
 
+// Why the sound helper couldn't start, in words (its own messages are technical English).
+function audioWhy(msg) {
+  const m = String(msg || '');
+  if (/only available on Windows/i.test(m)) return tr('it only works on Windows');
+  if (/Windows 10 version 2004/i.test(m)) return tr('it needs Windows 10 version 2004 or newer');
+  if (/window not found/i.test(m)) return tr('that window was closed');
+  if (/timed out/i.test(m)) return tr('sound capture took too long to start');
+  if (/helper exited/i.test(m)) return tr('the sound capture stopped');
+  return m;
+}
+
 async function startAppAudioTrack(sourceId) {
   const res = await window.gameshare.startAppAudio(sourceId);
   if (!res || !res.ok) throw new Error(res && res.error || 'unknown error');
@@ -452,7 +465,7 @@ async function startAppAudioTrack(sourceId) {
     node.port.postMessage(copy, [copy]);
   });
   window.gameshare.onAppAudioEnded(() => {
-    if (appAudio.node === node && state.screen) toast('The shared app’s sound stopped.', 'warn');
+    if (appAudio.node === node && state.screen) toast(tr('The shared app’s sound stopped.'), 'warn');
   });
   appAudio.node = node;
   appAudio.track = dest.stream.getAudioTracks()[0];
@@ -522,7 +535,7 @@ async function captureRaw() {
       return await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: prefs.micId } }, video: false });
     } catch (e) {
       console.warn('chosen mic unavailable', e);
-      toast('Your chosen microphone isn’t connected. Using the system default.', 'warn');
+      toast(tr('Your chosen microphone isn’t connected. Using the system default.'), 'warn');
     }
   }
   return navigator.mediaDevices.getUserMedia({ audio, video: false });
@@ -543,7 +556,7 @@ async function noiseGraph(raw) {
     if (e.data && e.data.error && !mic.failed) {
       console.warn('noise removal failed', e.data.error);
       mic.failed = true;
-      toast('Background noise removal couldn’t start. Using the standard noise filter.', 'warn');
+      toast(tr('Background noise removal couldn’t start. Using the standard noise filter.'), 'warn');
       swapMic();
     }
   };
@@ -568,7 +581,7 @@ async function getMic() {
     raw = await captureRaw();
   } catch (e) {
     console.warn('No microphone:', e);
-    toast('No microphone found. You can listen and share, but others won’t hear you.', 'warn');
+    toast(tr('No microphone found. You can listen and share, but others won’t hear you.'), 'warn');
     state.micReal = false;
     return silentStream();
   }
@@ -578,7 +591,7 @@ async function getMic() {
   // Headset unplugged mid-call: carry on with the system default mic.
   if (track) track.onended = () => {
     if (document.body.dataset.view !== 'room' || mic.raw !== raw) return;
-    toast('Your microphone was disconnected. Switching to the system default.', 'warn');
+    toast(tr('Your microphone was disconnected. Switching to the system default.'), 'warn');
     swapMic({ useDefault: true });
   };
   if (prefs.noiseRemoval !== false && !mic.failed) {
@@ -632,7 +645,7 @@ async function setHeadphones(on) {
   updateControls();
   if (!state.mic || !state.peer) return;
   await swapMic();
-  toast(on ? 'Headphones mode on: echo cancellation off for clearer voice.' : 'Headphones mode off: echo cancellation on.');
+  toast(on ? tr('Headphones mode on: echo cancellation off for clearer voice.') : tr('Headphones mode off: echo cancellation on.'));
 }
 
 /* ------------------------------------------------------------ devices
@@ -640,7 +653,7 @@ async function setHeadphones(on) {
  * their stream sound and the sound effects all play on the chosen output. */
 
 function deviceLabel(d, i, kind) {
-  return d.label || (kind === 'audioinput' ? `Microphone ${i + 1}` : `Speakers ${i + 1}`);
+  return d.label || (kind === 'audioinput' ? tr('Microphone {n}', { n: i + 1 }) : tr('Speakers {n}', { n: i + 1 }));
 }
 
 async function refreshDevices() {
@@ -653,12 +666,12 @@ async function refreshDevices() {
     const sysDefault = all.find((d) => d.deviceId === 'default');
     const real = all.filter((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
     const opts = [el('option', null, sysDefault && sysDefault.label
-      ? `System default (${sysDefault.label.replace(/^Default\s*-\s*/i, '')})` : 'System default')];
+      ? tr('System default ({name})', { name: sysDefault.label.replace(/^Default\s*-\s*/i, '') }) : tr('System default'))];
     opts[0].value = '';
     real.forEach((d, i) => { const o = el('option', null, deviceLabel(d, i, kind)); o.value = d.deviceId; opts.push(o); });
     const want = prefs[pref] || '';
     if (want && !real.some((d) => d.deviceId === want)) {
-      const o = el('option', null, 'Disconnected device'); o.value = want; o.disabled = true; opts.push(o);
+      const o = el('option', null, tr('Disconnected device')); o.value = want; o.disabled = true; opts.push(o);
     }
     sel.replaceChildren(...opts);
     sel.value = want;
@@ -691,7 +704,7 @@ function getPeer(id) {
   let p = state.peers.get(id);
   if (!p) {
     p = {
-      id, name: 'Friend', muted: false, sharing: false, greeted: false,
+      id, name: tr('Friend'), muted: false, sharing: false, greeted: false,
       conn: null, voice: null, screenOut: null, screenIn: null,
       audio: new Audio(), volume: 1,
       view: null,      // how big this friend shows MY screen: { h, paused }
@@ -740,7 +753,7 @@ function helloMsg(extra) {
 function noteSharing(p, sharing) {
   if (sharing && !p.announced && p.greeted && !state.leaving && document.body.dataset.view === 'room') {
     p.announced = true;
-    toast(`${p.name} started sharing`, 'ok');
+    toast(tr('{name} started sharing', { name: p.name }), 'ok');
     cue('share');
     attention();
   }
@@ -758,7 +771,7 @@ function removePeer(id, reason) {
   unwatchLevel(id);
   removeTile(id);
   if (p.greeted && !state.leaving) {
-    toast(`${p.name} ${reason || 'left'}`);
+    toast(reason === 'lost connection' ? tr('{name} lost connection', { name: p.name }) : tr('{name} left', { name: p.name }));
     if (!p.lost) cue('leave'); // a lost friend already had their sound
   }
   renderPeople();
@@ -888,15 +901,15 @@ function linkNews(p, back) {
   else { news.back.delete(p.id); news.lost.set(p.id, p.name); }
   clearTimeout(news.timer);
   news.timer = setTimeout(() => {
-    const who = (m) => (m.size <= 2 ? [...m.values()].join(' and ') : `${m.size} friends`);
+    const who = (m) => (m.size <= 2 ? [...m.values()].join(` ${tr('and')} `) : tr('{n} friends', { n: m.size }));
     const friends = [...state.peers.values()].filter((q) => q.greeted);
     if (news.lost.size && !state.leaving) {
       const mine = (state.peer && state.peer.disconnected) || (friends.length > 1 && friends.every((q) => q.lost));
-      toast(mine ? 'Your connection dropped. Reconnecting…' : `Lost the connection to ${who(news.lost)}. Reconnecting…`, 'warn');
+      toast(mine ? tr('Your connection dropped. Reconnecting…') : tr('Lost the connection to {who}. Reconnecting…', { who: who(news.lost) }), 'warn');
       cue('leave');
     }
     if (news.back.size && !state.leaving) {
-      toast(`${who(news.back)} ${news.back.size === 1 ? 'is' : 'are'} back`, 'ok');
+      toast(trn(news.back.size, '{who} is back', '{who} are back', { who: who(news.back) }), 'ok');
       cue('join');
     }
     news.lost.clear();
@@ -1108,7 +1121,7 @@ function onMessage(conn, msg) {
       const joined = !p.greeted;
       const restarted = !!p.boot && typeof msg.boot === 'string' && msg.boot !== p.boot;
       if (typeof msg.boot === 'string') p.boot = msg.boot.slice(0, 16);
-      p.name = String(msg.name || 'Friend').slice(0, 24);
+      p.name = String(msg.name || tr('Friend')).slice(0, 24);
       p.muted = !!msg.muted;
       p.greeted = true;
       if (joined) p.announced = !!msg.sharing; // already sharing when we met: no "started" alert
@@ -1148,7 +1161,7 @@ function onMessage(conn, msg) {
       if (state.doorman && (joined || restarted)) send(p, { type: 'doorman' });
       // (Right after my app restarted, everyone "joins" again: no toasts for that.)
       if (joined && !state.leaving && !p.outgoing && document.body.dataset.view === 'room' && performance.now() > state.quietUntil) {
-        toast(`${p.name} joined`, 'ok');
+        toast(tr('{name} joined', { name: p.name }), 'ok');
         cue('join');
         attention();
       }
@@ -1182,7 +1195,7 @@ function onMessage(conn, msg) {
         try { conn.close(); } catch { /* ignore */ }
         if (typeof msg.owner === 'string') state.doormanOwner = msg.owner;
       } else if (!p.greeted) {
-        p.name = String(msg.name || 'Friend').slice(0, 24);
+        p.name = String(msg.name || tr('Friend')).slice(0, 24);
         p.muted = !!msg.muted;
         p.greeted = true;
         p.announced = !!msg.sharing;
@@ -1216,12 +1229,12 @@ function onMessage(conn, msg) {
         if (inside || p.id !== roomId()) break;
         const code = state.code;
         leave(true);
-        lobbyStatus(`You were disconnected and room ${code} filled up meanwhile (${max} players).`, 'err');
+        lobbyStatus(tr('You were disconnected and room {code} filled up meanwhile ({n} players).', { code, n: max }), 'err');
         break;
       }
       clearTimeout(state.joinTimer);
       leave(true);
-      lobbyStatus(`That room is full (${max} players). Ask the host to make it bigger in Settings.`, 'err');
+      lobbyStatus(tr('That room is full ({n} players). Ask the host to make it bigger in Settings.', { n: max }), 'err');
       break;
     }
     case 'state': {
@@ -1242,7 +1255,7 @@ function onMessage(conn, msg) {
       if (n !== state.maxPeople) {
         state.maxPeople = n;
         if (prefs.lastRoom && prefs.lastRoom.code === state.code) { prefs.lastRoom.size = n; savePrefs(); }
-        toast(`Room size is now ${n} players`);
+        toast(tr('Room size is now {n} players', { n }));
         renderPeople();
       }
       break;
@@ -1499,7 +1512,7 @@ function watchIce(call) {
   pc.addEventListener('connectionstatechange', () => {
     if (pc.connectionState === 'connected') worked = true;
     if (pc.connectionState === 'failed' && !worked && !state.leaving) {
-      toast('Couldn’t reach a friend directly — their network may be blocking it.', 'warn');
+      toast(tr('Couldn’t reach a friend directly — their network may be blocking it.'), 'warn');
     }
     updateNetBadge();
   });
@@ -1580,7 +1593,7 @@ async function startShare() {
     stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
   } catch (e) {
     console.warn('getDisplayMedia', e);
-    toast('Couldn’t capture that. On a Mac, allow GameShare under System Settings › Privacy › Screen Recording.', 'err');
+    toast(tr('Couldn’t capture that. On a Mac, allow GameShare under System Settings › Privacy › Screen Recording.'), 'err');
     return;
   }
 
@@ -1597,7 +1610,7 @@ async function startShare() {
     } catch (e) {
       console.warn('app audio', e);
       stopAppAudioTrack();
-      toast(`Sharing without sound: ${e.message}.`, 'warn');
+      toast(tr('Sharing without sound: {why}.', { why: audioWhy(e.message) }), 'warn');
     }
   }
 
@@ -1668,7 +1681,7 @@ async function openPicker() {
 // open (after a few tries it says so meanwhile).
 async function loadSources() {
   const round = ++thumbRound;
-  $('#sourceGrid').innerHTML = '<p class="loading">Finding windows…</p>';
+  $('#sourceGrid').replaceChildren(el('p', 'loading', tr('Finding windows…')));
   pickerSources = [];
   for (let attempt = 0; !pickerSources.length; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, Math.min(2000, 600 * attempt)));
@@ -1721,15 +1734,15 @@ function renderSources() {
     t.setAttribute('aria-selected', String(on));
   });
   $('#audioOptText').innerHTML = pickerKind === 'window'
-    ? 'Share this app’s sound <small>Only the window you pick. Never your call.</small>'
-    : 'Share computer sound <small>Everything except GameShare, so friends never hear themselves.</small>';
+    ? `${tr('Share this app’s sound')} <small>${tr('Only the window you pick. Never your call.')}</small>`
+    : `${tr('Share computer sound')} <small>${tr('Everything except GameShare, so friends never hear themselves.')}</small>`;
   const grid = $('#sourceGrid');
   grid.innerHTML = '';
   const list = pickerSources.filter((s) => s.kind === pickerKind);
   if (!list.length) {
     grid.appendChild(el('p', 'loading', pickerKind === 'window'
-      ? 'No windows found. Try the Screens tab.'
-      : 'No screens found. On a Mac, allow Screen Recording for GameShare and restart it.'));
+      ? tr('No windows found. Try the Screens tab.')
+      : tr('No screens found. On a Mac, allow Screen Recording for GameShare and restart it.')));
     return;
   }
   for (const s of list) {
@@ -1787,41 +1800,43 @@ function addTile(id, stream, isMe) {
   video.addEventListener('resize', scheduleLayout); // real shape known -> refit
 
   const peer = isMe ? null : state.peers.get(id);
-  const who = isMe ? 'You' : (peer ? peer.name : 'Friend');
+  const who = () => (isMe ? tr('You') : (state.peers.get(id) || peer || {}).name || tr('Friend'));
 
   // Always-visible name chip (top left)
   const chip = el('div', 'tile-chip');
   tile.style.setProperty('--pc', colorOf(isMe ? 'me' : id));
-  chip.append(el('span', 'tile-name', who));
-  if (isMe) chip.appendChild(el('span', 'chip-live', 'LIVE'));
+  const nameEl = el('span', 'tile-name', who());
+  chip.append(nameEl);
+  const liveEl = isMe ? el('span', 'chip-live') : null;
+  if (liveEl) chip.appendChild(liveEl);
 
   // Controls (bottom, on hover)
   const bar = el('div', 'tile-bar');
   const left = el('div', 'tile-left');
   const soundInfo = isMe ? state.screenSound : (peer || {}).screenSound;
   const hasAudio = stream.getAudioTracks().length > 0;
-  left.appendChild(el('span', 'tile-sound', soundLabel(soundInfo, hasAudio, isMe)));
+  const soundEl = el('span', 'tile-sound');
+  left.appendChild(soundEl);
   const tools = el('div', 'tile-tools');
 
+  let none = null, noneText = null, vol = null, sync = null, stop = null, stallText = null;
   if (!isMe && !hasAudio) {
-    const none = el('div', 'stream-vol disabled');
-    none.title = `${who} isn’t sharing sound`;
-    none.append(el('span', 'stream-mute off'), el('span', 'stream-none', 'No sound'));
+    none = el('div', 'stream-vol disabled');
+    noneText = el('span', 'stream-none');
+    none.append(el('span', 'stream-mute off'), noneText);
     tools.appendChild(none);
   }
   if (!isMe && hasAudio) {
     const wrap = el('div', 'stream-vol');
     const snd = el('button', 'stream-mute');
-    const vol = el('input', 'stream-slider');
+    vol = el('input', 'stream-slider');
     vol.type = 'range'; vol.min = '0'; vol.max = '100';
     vol.value = String(Math.round((peer && peer.streamVolume != null ? peer.streamVolume : 1) * 100));
-    vol.title = 'Stream volume';
-    vol.setAttribute('aria-label', `${who}’s stream volume`);
-    const sync = () => {
+    sync = () => {
       const pr = state.peers.get(id);
       const off = !pr || pr.tileSoundOff || Number(vol.value) === 0;
       snd.classList.toggle('off', off);
-      snd.title = pr && pr.tileSoundOff ? 'Unmute stream sound' : 'Mute stream sound';
+      snd.title = pr && pr.tileSoundOff ? tr('Unmute stream sound') : tr('Mute stream sound');
       snd.setAttribute('aria-label', snd.title);
       vol.style.setProperty('--fill', `${vol.value}%`);
     };
@@ -1841,22 +1856,18 @@ function addTile(id, stream, isMe) {
     });
     wrap.append(snd, vol);
     tools.appendChild(wrap);
-    sync();
   }
   if (isMe) {
-    const stop = el('button', 'tile-btn danger', 'Stop');
+    stop = el('button', 'tile-btn danger');
     stop.addEventListener('click', () => stopShare());
     tools.appendChild(stop);
   }
   // Stats: resolution, frame rate, bitrate… on every screen (one switch for all).
-  const stats = el('button', 'tile-btn stats-btn', 'Stats');
-  stats.title = isMe ? 'Show what each friend is getting from you' : 'Show stream numbers: resolution, frame rate, bitrate, delay';
+  const stats = el('button', 'tile-btn stats-btn');
   stats.setAttribute('aria-pressed', String(!!prefs.stats));
   stats.addEventListener('click', () => setStats(!prefs.stats));
   tools.appendChild(stats);
   const full = el('button', 'tile-btn icon full-btn');
-  full.title = 'Full screen';
-  full.setAttribute('aria-label', 'Full screen');
   full.addEventListener('click', () => toggleFullscreen(tile));
   tools.appendChild(full);
   // Using the controls shouldn't enlarge or full-screen the tile.
@@ -1864,22 +1875,47 @@ function addTile(id, stream, isMe) {
   bar.append(left, tools);
 
   const close = el('button', 'tile-close');
-  close.title = isMe ? 'Hide my preview (keeps sharing)' : 'Close this screen';
-  close.setAttribute('aria-label', close.title);
   close.addEventListener('click', (e) => { e.stopPropagation(); closeTile(id); });
   close.addEventListener('dblclick', (e) => e.stopPropagation());
 
   tile.append(video, chip, bar, close, el('div', 'tile-stats'));
   if (!isMe) {
     const stall = el('div', 'tile-stall');
-    stall.append(el('i', 'spin'), el('span', null, 'Reconnecting…'));
+    stallText = el('span');
+    stall.append(el('i', 'spin'), stallText);
     tile.appendChild(stall);
   }
+
+  // Every word on the tile, so a language switch can redo them in place.
+  const relabel = () => {
+    if (isMe) nameEl.textContent = tr('You');
+    if (liveEl) liveEl.textContent = tr('LIVE');
+    soundEl.textContent = soundLabel(soundInfo, hasAudio);
+    if (none) {
+      none.title = tr('{name} isn’t sharing sound', { name: who() });
+      noneText.textContent = tr('No sound');
+    }
+    if (vol) {
+      vol.title = tr('Stream volume');
+      vol.setAttribute('aria-label', tr('{name}’s stream volume', { name: who() }));
+      sync();
+    }
+    if (stop) stop.textContent = tr('Stop');
+    stats.textContent = tr('Stats');
+    stats.title = isMe ? tr('Show what each friend is getting from you') : tr('Show stream numbers: resolution, frame rate, bitrate, delay');
+    const fullOn = document.fullscreenElement === tile;
+    full.title = fullOn ? tr('Exit full screen') : tr('Full screen');
+    full.setAttribute('aria-label', full.title);
+    close.title = isMe ? tr('Hide my preview (keeps sharing)') : tr('Close this screen');
+    close.setAttribute('aria-label', close.title);
+    if (stallText) stallText.textContent = tr('Reconnecting…');
+  };
+  relabel();
   tile.addEventListener('click', () => { if (!document.fullscreenElement) toggleFocus(id); });
   tile.addEventListener('dblclick', () => toggleFullscreen(tile));
   // In full screen, controls and cursor hide after a moment without movement.
   // call: the screen call this picture comes from (a newer one = this one is stale).
-  const entry = { tile, video, isMe, placed: !!prevStyle, idle: null, call: peer ? peer.screenIn : null, stalled: false };
+  const entry = { tile, video, isMe, placed: !!prevStyle, idle: null, call: peer ? peer.screenIn : null, stalled: false, relabel };
   tile.addEventListener('mousemove', () => wake(entry));
 
   if (prevStyle) tile.setAttribute('style', prevStyle);
@@ -1908,7 +1944,7 @@ function toggleFullscreen(tile) {
   } else {
     tile.requestFullscreen().catch((e) => {
       console.warn('fullscreen', e);
-      toast('Couldn’t go full screen.', 'err');
+      toast(tr('Couldn’t go full screen.'), 'err');
     });
   }
 }
@@ -1918,7 +1954,7 @@ document.addEventListener('fullscreenchange', () => {
   for (const t of tiles.values()) {
     const b = t.tile.querySelector('.full-btn');
     const on = fs === t.tile;
-    b.title = on ? 'Exit full screen' : 'Full screen';
+    b.title = on ? tr('Exit full screen') : tr('Full screen');
     b.setAttribute('aria-label', b.title);
     b.classList.toggle('exit', on);
     if (on) wake(t); else t.tile.classList.remove('awake');
@@ -1933,7 +1969,7 @@ function closeTile(id) {
   if (id === 'me') {
     state.previewHidden = true;
     removeTile('me');
-    toast('Preview hidden. You’re still sharing.');
+    toast(tr('Preview hidden. You’re still sharing.'));
   } else {
     const p = state.peers.get(id);
     if (!p) return;
@@ -1966,11 +2002,11 @@ function versionLess(a, b) {
 }
 
 function soundLabel(info, hasAudio) {
-  if (!hasAudio) return 'no sound';
-  if (!info) return 'sound: unknown (they need to update GameShare)';
-  if (info.sound === 'app') return `sound: ${info.app || 'this app'} only`;
-  if (info.sound === 'system') return 'sound: whole computer except GameShare';
-  return 'sound';
+  if (!hasAudio) return tr('no sound');
+  if (!info) return tr('sound: unknown (they need to update GameShare)');
+  if (info.sound === 'app') return tr('sound: {app} only', { app: info.app || tr('this app') });
+  if (info.sound === 'system') return tr('sound: whole computer except GameShare');
+  return tr('sound');
 }
 
 function removeTile(id, { keepLayout = false } = {}) {
@@ -2174,7 +2210,6 @@ function makeRow(key, me) {
   const top = el('div', 'p-name');
   const name = el('span', 'p-label');
   const host = el('span', 'host-icon hidden');
-  host.title = 'Host: can change the room size';
   top.append(name, host);
   const sub = el('div', 'p-sub');
   const watch = el('button', 'watch-btn hidden');
@@ -2192,7 +2227,6 @@ function makeRow(key, me) {
     r.hear = el('button', 'hear-btn');
     r.hear.addEventListener('click', (e) => { e.stopPropagation(); toggleLocalMute(key); });
     li.tabIndex = 0;
-    li.title = 'Volume and options';
     li.addEventListener('click', () => openPersonMenu(key));
     li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPersonMenu(key); } });
   }
@@ -2216,45 +2250,49 @@ function updateRow(r, d) {
   r.li.style.setProperty('--pc', d.color);
   r.av.style.setProperty('--pc', d.color);
   r.av.textContent = initials(d.name);
-  r.name.textContent = d.me ? `${d.name} (you)` : d.name;
+  r.name.textContent = d.me ? tr('{name} (you)', { name: d.name }) : d.name;
   r.name.title = r.name.textContent;
+  r.host.title = tr('Host: can change the room size');
+  if (!d.me) r.li.title = tr('Volume and options');
   r.host.classList.toggle('hidden', !d.host);
   r.li.classList.toggle('lost', !!d.lost);
   const sub = [];
-  if (d.lost) sub.push(el('span', 'lost-tag', 'Reconnecting…'));
-  if (d.sharing) sub.push(el('span', 'live-tag', 'Live'));
-  if (d.deafened) sub.push(el('span', null, d.me ? 'Voices muted' : 'Can’t hear voices'));
-  if (d.localMuted) sub.push(el('span', null, 'Muted for you'));
+  if (d.lost) sub.push(el('span', 'lost-tag', tr('Reconnecting…')));
+  if (d.sharing) sub.push(el('span', 'live-tag', tr('Live')));
+  if (d.deafened) sub.push(el('span', null, d.me ? tr('Voices muted') : tr('Can’t hear voices')));
+  if (d.localMuted) sub.push(el('span', null, tr('Muted for you')));
   if (d.outdated) {
-    const t = el('span', 'warn-tag', 'Old version');
-    t.title = `${d.name} is running an older GameShare. Ask them to update so everything works the same for everyone.`;
+    const t = el('span', 'warn-tag', tr('Old version'));
+    t.title = tr('{name} is running an older GameShare. Ask them to update so everything works the same for everyone.', { name: d.name });
     sub.push(t);
   }
   r.sub.replaceChildren(...sub);
   const showWatch = d.sharing && d.closed;
   r.watch.classList.toggle('hidden', !showWatch);
-  r.watch.textContent = showWatch ? (d.me ? 'Show my preview' : 'Watch screen') : '';
+  r.watch.textContent = showWatch ? (d.me ? tr('Show my preview') : tr('Watch screen')) : '';
   r.mic.classList.toggle('hidden', !d.muted);
-  r.mic.title = d.me ? 'Your mic is off' : `${d.name}’s mic is off`;
+  r.mic.title = d.me ? tr('Your mic is off') : tr('{name}’s mic is off', { name: d.name });
   r.deaf.classList.toggle('hidden', !d.deafened);
-  r.deaf.title = d.me ? 'You muted everyone’s voice' : `${d.name} can’t hear voices right now`;
+  r.deaf.title = d.me ? tr('You muted everyone’s voice') : tr('{name} can’t hear voices right now', { name: d.name });
   r.li.classList.toggle('muted-for-me', !!d.localMuted);
   if (r.hear) {
     r.hear.className = 'hear-btn' + (d.localMuted ? ' off' : '');
-    r.hear.title = d.localMuted ? `Unmute ${d.name}’s voice for me` : `Mute ${d.name}’s voice for me (their stream has its own volume)`;
+    r.hear.title = d.localMuted ? tr('Unmute {name}’s voice for me', { name: d.name }) : tr('Mute {name}’s voice for me (their stream has its own volume)', { name: d.name });
     r.hear.setAttribute('aria-label', r.hear.title);
   }
   if (r.net) {
     const lvl = d.lost ? 'bad' : netLevel(d.net);
     r.net.className = 'net ' + lvl;
-    r.net.title = d.lost ? 'Connection lost. Reconnecting…' : netText(d.net);
+    r.net.title = d.lost ? tr('Connection lost. Reconnecting…') : netText(d.net);
   }
 }
 
-function netText(n) {
-  if (!n || n.rtt == null) return 'Connection: measuring…';
-  return `Ping ${n.rtt} ms, ${n.loss == null ? '–' : n.loss.toFixed(n.loss < 1 ? 1 : 0)}% lost` +
-    (n.relay ? ', going through a relay server' : ', direct');
+// L: the translator to use (the diagnostics report stays in English).
+function netText(n, L = tr) {
+  if (!n || n.rtt == null) return L('Connection: measuring…');
+  const loss = n.loss == null ? '–' : n.loss.toFixed(n.loss < 1 ? 1 : 0);
+  return n.relay ? L('Ping {rtt} ms, {loss}% lost, going through a relay server', { rtt: n.rtt, loss })
+                 : L('Ping {rtt} ms, {loss}% lost, direct', { rtt: n.rtt, loss });
 }
 
 // One square per player slot: filled in each player's colour, open slots hollow.
@@ -2298,7 +2336,7 @@ function renderParty(list) {
       m.el.style.setProperty('--pc', d.color);
       m.av.style.setProperty('--pc', d.color);
       m.av.textContent = initials(d.name);
-      m.nm.textContent = d.me ? `${d.name} (you)` : d.lost ? `${d.name} · reconnecting…` : d.name;
+      m.nm.textContent = d.me ? tr('{name} (you)', { name: d.name }) : d.lost ? tr('{name} · reconnecting…', { name: d.name }) : d.name;
       m.el.classList.toggle('muted-for-me', !!d.localMuted);
       m.el.classList.toggle('lost', !!d.lost);
     }
@@ -2407,16 +2445,16 @@ function updatePersonMenu() {
   av.textContent = initials(p.name);
   m.querySelector('.pop-name').textContent = p.name;
   const bits = [];
-  if (p.lost) bits.push('reconnecting…');
-  if (p.sharing) bits.push('sharing their screen');
-  if (p.muted) bits.push('mic off');
-  if (p.deafened) bits.push('can’t hear voices');
-  const sub = bits.length ? bits.join(', ') : 'in the room';
+  if (p.lost) bits.push(tr('reconnecting…'));
+  if (p.sharing) bits.push(tr('sharing their screen'));
+  if (p.muted) bits.push(tr('mic off'));
+  if (p.deafened) bits.push(tr('can’t hear voices'));
+  const sub = bits.length ? bits.join(', ') : tr('in the room');
   m.querySelector('.pop-sub').textContent = sub.charAt(0).toUpperCase() + sub.slice(1);
   m.querySelector('.pop-mute').setAttribute('aria-checked', String(!!p.localMuted));
   const watch = m.querySelector('.pop-watch');
   watch.classList.toggle('hidden', !p.sharing);
-  watch.textContent = p.hidden ? 'Watch their screen' : 'Close their screen';
+  watch.textContent = p.hidden ? tr('Watch their screen') : tr('Close their screen');
   m.querySelector('.pop-net').textContent = p.net ? netText(p.net) : '';
 }
 
@@ -2429,10 +2467,10 @@ function closePersonMenu() {
 /* ------------------------------------------------------------ room size */
 
 function holderName() {
-  if (amHolder()) return 'you';
+  if (amHolder()) return tr('you');
   const id = state.doormanOwner || roomId();
   const p = state.peers.get(id);
-  return p && p.greeted ? p.name : 'the host';
+  return p && p.greeted ? p.name : tr('the host');
 }
 
 function updateSizeControls() {
@@ -2443,8 +2481,8 @@ function updateSizeControls() {
   $('#sizeDown').disabled = !host || state.maxPeople <= Math.max(MIN_SIZE, count);
   $('#sizeUp').disabled = !host || state.maxPeople >= MAX_LIMIT;
   $('#sizeHint').textContent = host
-    ? `How many players fit, up to ${MAX_LIMIT}`
-    : `Only ${holderName()} can change it`;
+    ? tr('How many players fit, up to {n}', { n: MAX_LIMIT })
+    : tr('Only {name} can change it', { name: holderName() });
 }
 
 function setRoomSize(n) {
@@ -2466,14 +2504,14 @@ function renderSizePicker() {
   for (let i = 1; i <= MAX_LIMIT; i++) {
     const b = el('button', 'size-pip' + (i === 1 ? ' you' : i <= prefs.roomSize ? ' on' : ''));
     b.type = 'button';
-    b.title = i === 1 ? 'You' : `${i} players`;
-    b.setAttribute('aria-label', i === 1 ? 'You' : `Room for ${i} players`);
+    b.title = i === 1 ? tr('You') : tr('{n} players', { n: i });
+    b.setAttribute('aria-label', i === 1 ? tr('You') : tr('Room for {n} players', { n: i }));
     b.setAttribute('aria-pressed', String(i === prefs.roomSize));
     if (i > 1) b.addEventListener('click', () => { prefs.roomSize = i; savePrefs(); renderSizePicker(); });
     out.push(b);
   }
   box.replaceChildren(...out);
-  $('#sizeValue').textContent = `${prefs.roomSize} players`;
+  $('#sizeValue').textContent = tr('{n} players', { n: prefs.roomSize });
 }
 
 function updateNetBadge() {
@@ -2481,14 +2519,14 @@ function updateNetBadge() {
   const friends = [...state.peers.values()].filter((p) => p.greeted);
   const lost = friends.filter((p) => p.lost);
   if (lost.length && (state.peer.disconnected || (friends.length > 1 && lost.length === friends.length))) {
-    setNet('Your connection dropped. Reconnecting…', 'warn');
+    setNet(tr('Your connection dropped. Reconnecting…'), 'warn');
   } else if (lost.length) {
-    setNet(lost.length === 1 ? `Reconnecting to ${lost[0].name}…` : `Reconnecting to ${lost.length} friends…`, 'warn');
+    setNet(lost.length === 1 ? tr('Reconnecting to {name}…', { name: lost[0].name }) : tr('Reconnecting to {n} friends…', { n: lost.length }), 'warn');
   } else if (state.peer.disconnected) {
     // Only the matchmaking server: calls in progress keep working.
-    setNet('Reconnecting to the server…', 'warn');
+    setNet(tr('Reconnecting to the server…'), 'warn');
   } else {
-    setNet(friends.length ? 'Connected' : 'Waiting for friends', friends.length ? 'ok' : '');
+    setNet(friends.length ? tr('Connected') : tr('Waiting for friends'), friends.length ? 'ok' : '');
   }
 }
 
@@ -2550,25 +2588,30 @@ async function callStats(call, dir) {
 }
 
 const mbps = (kbps) => (kbps == null ? '…' : kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} kbps`);
-const coder = (s, what) => (s.hw == null ? (s.impl || '') : `${s.hw ? 'hardware' : 'software'} ${what}${s.impl ? ` (${s.impl})` : ''}`);
+// what: 'decoding' or 'encoding'
+const coder = (s, what, L = tr) => (s.hw == null ? (s.impl || '')
+  : L(s.hw ? `hardware ${what}` : `software ${what}`) + (s.impl ? ` (${s.impl})` : ''));
 
 // compact: for small screens (a strip thumbnail, your own preview).
-function describeIn(s, compact) {
-  if (!s || !s.w) return s && s.state !== 'connected' ? `not connected (${s.state})` : 'waiting for video…';
-  if (compact) return `${s.h}p · ${s.fps} fps · ${mbps(s.kbps)}\n${s.buffer != null ? `${s.buffer} ms buffer · ` : ''}${s.freezes} freeze${s.freezes === 1 ? '' : 's'}`;
+function describeIn(s, compact, L = tr) {
+  if (!s || !s.w) return s && s.state !== 'connected' ? L('not connected ({state})', { state: s.state }) : L('waiting for video…');
+  const freezes = L(s.freezes === 1 ? '{n} freeze' : '{n} freezes', { n: s.freezes });
+  if (compact) return `${s.h}p · ${s.fps} fps · ${mbps(s.kbps)}\n${s.buffer != null ? `${L('{n} ms buffer', { n: s.buffer })} · ` : ''}${freezes}`;
   return [
     `${s.w}×${s.h} · ${s.fps} fps · ${mbps(s.kbps)}`,
-    [s.codec, coder(s, 'decoding')].filter(Boolean).join(' · '),
-    `${s.buffer != null ? `buffer ${s.buffer} ms · ` : ''}${s.freezes} freeze${s.freezes === 1 ? '' : 's'} · ${s.loss.toFixed(1)}% lost`,
-    `${s.relay ? 'via relay server' : 'direct'}${s.rtt != null ? ` · ping ${s.rtt} ms` : ''}`
+    [s.codec, coder(s, 'decoding', L)].filter(Boolean).join(' · '),
+    `${s.buffer != null ? `${L('buffer {n} ms', { n: s.buffer })} · ` : ''}${freezes} · ${L('{n}% lost', { n: s.loss.toFixed(1) })}`,
+    `${s.relay ? L('via relay server') : L('direct')}${s.rtt != null ? ` · ping ${s.rtt} ms` : ''}`
   ].join('\n');
 }
 
-function describeOut(name, s, p, compact) {
-  if (!s || s.state !== 'connected') return `${name}: connecting…`;
-  if (!s.active || (p.view && p.view.paused)) return compact ? `${name}: paused` : `${name}: paused (they minimized GameShare)`;
-  if (compact) return `${name}: ${s.h}p ${s.fps} fps ${mbps(s.kbps)}${s.limit === 'cpu' ? ' · CPU' : s.limit === 'bandwidth' ? ' · net' : ''}`;
-  return `${name}: ${s.w}×${s.h} · ${s.fps} fps · ${mbps(s.kbps)}${s.limit !== 'none' ? ` · held back by ${s.limit === 'cpu' ? 'your CPU' : s.limit === 'bandwidth' ? 'the connection' : s.limit}` : ''}`;
+function describeOut(name, s, p, compact, L = tr) {
+  if (!s || s.state !== 'connected') return `${name}: ${L('connecting…')}`;
+  if (!s.active || (p.view && p.view.paused)) return `${name}: ${compact ? L('paused') : L('paused (they minimized GameShare)')}`;
+  if (compact) return `${name}: ${s.h}p ${s.fps} fps ${mbps(s.kbps)}${s.limit === 'cpu' ? ' · CPU' : s.limit === 'bandwidth' ? ` · ${L('net')}` : ''}`;
+  const why = s.limit === 'cpu' ? L('held back by your CPU') : s.limit === 'bandwidth' ? L('held back by the connection')
+    : L('held back by {why}', { why: s.limit });
+  return `${name}: ${s.w}×${s.h} · ${s.fps} fps · ${mbps(s.kbps)}${s.limit !== 'none' ? ` · ${why}` : ''}`;
 }
 
 // Stats view: a small panel on every screen, refreshed each second.
@@ -2597,13 +2640,13 @@ async function updateStats() {
         if (!p.greeted || !p.screenOut) continue;
         const s = await callStats(p.screenOut, 'out');
         lines.push(describeOut(p.name, s, p, compact));
-        if (s && s.impl && !enc) enc = compact ? (s.hw == null ? '' : `${s.hw ? 'hardware' : 'software'} encoding`) : coder(s, 'encoding');
+        if (s && s.impl && !enc) enc = compact ? (s.hw == null ? '' : tr(s.hw ? 'hardware encoding' : 'software encoding')) : coder(s, 'encoding');
       }
-      text = lines.length ? [...lines, enc, state.movie ? 'movie mode' : ''].filter(Boolean).join('\n') : 'Nobody is watching yet';
+      text = lines.length ? [...lines, enc, state.movie ? tr('movie mode') : ''].filter(Boolean).join('\n') : tr('Nobody is watching yet');
     } else {
       const p = state.peers.get(id);
-      text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact) : 'reconnecting…';
-      if (p && p.screenIn && p.screenMovie) text += compact ? ' · movie' : '\nmovie mode';
+      text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact) : tr('reconnecting…');
+      if (p && p.screenIn && p.screenMovie) text += compact ? ` · ${tr('movie')}` : `\n${tr('movie mode')}`;
     }
     if (box.textContent !== text) box.textContent = text;
   }
@@ -2647,13 +2690,13 @@ async function diagnostics() {
   for (const p of state.peers.values()) {
     if (!p.greeted) continue;
     L.push('');
-    L.push(`${p.name} (GameShare ${p.version || 'older than 1.2'}): ${p.lost ? `RECONNECTING for ${Math.round((performance.now() - p.lost) / 1000)} s` : 'connected'} · ${netText(p.net)}`);
+    L.push(`${p.name} (GameShare ${p.version || 'older than 1.2'}): ${p.lost ? `RECONNECTING for ${Math.round((performance.now() - p.lost) / 1000)} s` : 'connected'} · ${netText(p.net, trEn)}`);
     L.push(`  link ${health(p.conn)} · voice ${health(p.voice)}${p.localMuted ? ' (muted by me)' : ''}${p.muted ? ' · their mic is off' : ''}`);
-    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in')).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + (p.screenMovie ? ' · movie mode' : ''));
+    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + (p.screenMovie ? ' · movie mode' : ''));
     else if (p.sharing) L.push(`  their screen: ${p.hidden ? 'closed by me' : 'not received'}`);
     if (p.screenOut) {
       const s = await callStats(p.screenOut, 'out');
-      L.push('  my screen to them: ' + describeOut('', s, p).replace(/^: /, '') + (s && s.impl ? ` · ${coder(s, 'encoding')}` : ''));
+      L.push('  my screen to them: ' + describeOut('', s, p, false, trEn).replace(/^: /, '') + (s && s.impl ? ` · ${coder(s, 'encoding', trEn)}` : ''));
     }
   }
   if (diagLog.length) {
@@ -2666,8 +2709,8 @@ async function diagnostics() {
 
 async function copyDiagnostics() {
   const text = await diagnostics();
-  try { await navigator.clipboard.writeText(text); toast('Report copied. Paste it to whoever is helping you.', 'ok'); }
-  catch { toast('Couldn’t copy the report.', 'err'); }
+  try { await navigator.clipboard.writeText(text); toast(tr('Report copied. Paste it to whoever is helping you.'), 'ok'); }
+  catch { toast(tr('Couldn’t copy the report.'), 'err'); }
   return text;
 }
 
@@ -2710,13 +2753,13 @@ function updateControls() {
   const micBtn = $('#micBtn');
   micBtn.classList.toggle('off', state.muted);
   micBtn.setAttribute('aria-pressed', String(state.muted));
-  micBtn.querySelector('.ctrl-label').textContent = state.muted ? 'Unmute' : 'Mute';
+  micBtn.querySelector('.ctrl-label').textContent = state.muted ? tr('Unmute') : tr('Mute');
   const deafBtn = $('#deafenBtn');
   deafBtn.classList.toggle('off', state.deafened);
   deafBtn.setAttribute('aria-pressed', String(state.deafened));
-  deafBtn.querySelector('.ctrl-label').textContent = state.deafened ? 'Voices off' : 'Voices';
-  micBtn.title = state.muted ? 'Unmute your mic (Ctrl+Shift+M)' : 'Mute your mic (Ctrl+Shift+M)';
-  deafBtn.title = state.deafened ? 'Hear everyone’s voice again (Ctrl+Shift+D)' : 'Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)';
+  deafBtn.querySelector('.ctrl-label').textContent = state.deafened ? tr('Voices off') : tr('Voices');
+  micBtn.title = state.muted ? tr('Unmute your mic (Ctrl+Shift+M)') : tr('Mute your mic (Ctrl+Shift+M)');
+  deafBtn.title = state.deafened ? tr('Hear everyone’s voice again (Ctrl+Shift+D)') : tr('Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)');
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
   $('#movieBtn').setAttribute('aria-checked', String(state.movie));
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
@@ -2727,7 +2770,33 @@ function updateControls() {
   $('#overlayCorner').value = prefs.overlayCorner || 'top left';
   const shareBtn = $('#shareBtn');
   shareBtn.classList.toggle('live', !!state.screen);
-  shareBtn.querySelector('.ctrl-label').textContent = state.screen ? 'Stop sharing' : 'Share screen';
+  shareBtn.querySelector('.ctrl-label').textContent = state.screen ? tr('Stop sharing') : tr('Share screen');
+}
+
+/* ------------------------------------------------------------ language
+ * Changes everything on screen right away, without leaving the room. */
+
+function setLanguage(pref) {
+  prefs.lang = pref;
+  savePrefs();
+  i18n.setLang(pref); // the fixed text of the page
+  for (const s of document.querySelectorAll('.lang-select')) s.value = pref;
+  // everything the app wrote itself
+  for (const r of rows.values()) r.sig = '';
+  for (const m of partyEls.values()) m.sig = '';
+  for (const t of tiles.values()) t.relabel();
+  renderSizePicker();
+  updateControls();
+  setPeoplePanel(!$('#room').classList.contains('collapsed'));
+  if (document.body.dataset.view === 'room') {
+    document.title = tr('GameShare · Room {code}', { code: state.code });
+    renderPeople();
+    updateNetBadge();
+  }
+  refreshDevices();
+  if (!$('#picker').classList.contains('hidden')) renderSources();
+  if (prefs.stats) updateStats();
+  pushOverlay();
 }
 
 /* ------------------------------------------------------------ room flow */
@@ -2810,19 +2879,19 @@ function wirePeer(peer) {
           // Nobody is in that room any more: open it again under the same code.
           createRoom(code);
         } else {
-          lobbyStatus('No room with that code. Check it and try again.', 'err');
+          lobbyStatus(tr('No room with that code. Check it and try again.'), 'err');
         }
       }
       // in-room: someone left mid-connect, ignore
     } else if (e.type === 'network' || e.type === 'server-error' || e.type === 'socket-error') {
-      setNet('Reconnecting…', 'warn');
+      setNet(tr('Reconnecting…'), 'warn');
     }
   });
 }
 
 async function prepare() {
   const name = $('#nameInput').value.trim();
-  if (!name) { lobbyStatus('Pick a name first.', 'err'); $('#nameInput').focus(); return false; }
+  if (!name) { lobbyStatus(tr('Pick a name first.'), 'err'); $('#nameInput').focus(); return false; }
   state.name = name.slice(0, 24);
   try { localStorage.setItem('gs-name', state.name); } catch { /* ignore */ }
   state.leaving = false;
@@ -2843,7 +2912,7 @@ async function createRoom(fixedCode) {
   const fixed = typeof fixedCode === 'string' ? fixedCode : null;
   const r = state.resume;
   setLobbyBusy(true);
-  lobbyStatus(r ? `Getting you back into room ${fixed}…` : fixed ? `Room ${fixed} was empty, opening it again…` : 'Creating room…');
+  lobbyStatus(r ? tr('Getting you back into room {code}…', { code: fixed }) : fixed ? tr('Room {code} was empty, opening it again…', { code: fixed }) : tr('Creating room…'));
   if (!(await prepare())) { setLobbyBusy(false); return false; }
   for (let attempt = 0; attempt < (fixed ? 1 : 4); attempt++) {
     const code = fixed || makeCode();
@@ -2858,29 +2927,29 @@ async function createRoom(fixedCode) {
       setMyColor(r && Number.isInteger(r.color) ? r.color : 0);
       wirePeer(state.peer);
       enterRoom();
-      if (fixed && !r) toast(`Room ${code} is open again. Friends can join with the same code.`, 'ok');
+      if (fixed && !r) toast(tr('Room {code} is open again. Friends can join with the same code.', { code }), 'ok');
       return true;
     } catch (e) {
       if (e && e.type === 'unavailable-id') continue;
       console.warn(e);
       cleanupMedia();
       setLobbyBusy(false);
-      lobbyStatus('Couldn’t reach the connection server. Check your internet and try again.', 'err');
+      lobbyStatus(tr('Couldn’t reach the connection server. Check your internet and try again.'), 'err');
       return false;
     }
   }
   cleanupMedia();
   setLobbyBusy(false);
-  lobbyStatus(fixed ? `Couldn’t reopen room ${fixed} yet. Try again in a minute, or create a new room.` : 'Couldn’t create a room right now. Try again.', 'err');
+  lobbyStatus(fixed ? tr('Couldn’t reopen room {code} yet. Try again in a minute, or create a new room.', { code: fixed }) : tr('Couldn’t create a room right now. Try again.'), 'err');
   return false;
 }
 
 async function joinRoom(opts) {
   const code = $('#codeInput').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (code.length !== 6) { lobbyStatus('Room codes are 6 characters.', 'err'); $('#codeInput').focus(); return; }
+  if (code.length !== 6) { lobbyStatus(tr('Room codes are 6 characters.'), 'err'); $('#codeInput').focus(); return; }
   const r = state.resume;
   setLobbyBusy(true);
-  lobbyStatus(r ? `Getting you back into room ${code}…` : opts && opts.rejoin ? `Rejoining room ${code}…` : 'Joining…');
+  lobbyStatus(r ? tr('Getting you back into room {code}…', { code }) : opts && opts.rejoin ? tr('Rejoining room {code}…', { code }) : tr('Joining…'));
   if (!(await prepare())) { setLobbyBusy(false); return; }
   // Back after a restart: the same player ID, so friends see me come back
   // instead of a second me joining.
@@ -2894,7 +2963,7 @@ async function joinRoom(opts) {
     console.warn(e);
     cleanupMedia();
     setLobbyBusy(false);
-    lobbyStatus('Couldn’t reach the connection server. Check your internet and try again.', 'err');
+    lobbyStatus(tr('Couldn’t reach the connection server. Check your internet and try again.'), 'err');
     return;
   }
   state.code = code;
@@ -2906,7 +2975,7 @@ async function joinRoom(opts) {
   connectTo(roomId());
   state.joinTimer = setTimeout(() => {
     leave(true);
-    lobbyStatus('The room didn’t answer. Make sure your friend is still in it.', 'err');
+    lobbyStatus(tr('The room didn’t answer. Make sure your friend is still in it.'), 'err');
   }, 15000);
 }
 
@@ -2938,7 +3007,7 @@ function enterRoom() {
   $('#room').classList.remove('hidden');
   $('#roomCode').textContent = state.code;
   $('#inviteCodeText').textContent = state.code;
-  document.title = `GameShare · Room ${state.code}`;
+  document.title = tr('GameShare · Room {code}', { code: state.code });
   const resumed = !!state.resume;
   const knew = resumed && Array.isArray(state.resume.peers) ? state.resume.peers : [];
   state.resume = null;
@@ -2958,7 +3027,7 @@ function enterRoom() {
   clearInterval(healTimer);
   healTimer = setInterval(heal, 1000);
   state.quietUntil = resumed ? performance.now() + 15000 : 0;
-  if (resumed) toast('GameShare hit a problem and restarted. You’re back in the room.', 'ok');
+  if (resumed) toast(tr('GameShare hit a problem and restarted. You’re back in the room.'), 'ok');
 }
 
 function cleanupMedia() {
@@ -3018,14 +3087,14 @@ function leave(silent = false) {
   setLobbyBusy(false);
   renderRejoin();
   pushOverlay();
-  if (!silent) lobbyStatus('You left the room.');
+  if (!silent) lobbyStatus(tr('You left the room.'));
 }
 
 function setPeoplePanel(show) {
   $('#room').classList.toggle('collapsed', !show);
   const b = $('#peopleToggle');
   b.setAttribute('aria-pressed', String(show));
-  b.title = show ? 'Collapse the panel (Ctrl+Shift+P)' : 'Expand the panel (Ctrl+Shift+P)';
+  b.title = show ? tr('Collapse the panel (Ctrl+Shift+P)') : tr('Expand the panel (Ctrl+Shift+P)');
   prefs.people = show;
   savePrefs();
   closePersonMenu();
@@ -3045,9 +3114,9 @@ function toggleMute() {
 }
 
 async function copyInvite() {
-  const text = `Join me on GameShare! Room code: ${state.code}`;
-  try { await navigator.clipboard.writeText(text); toast('Invite copied. Paste it to your friends.', 'ok'); }
-  catch { toast(`Room code: ${state.code}`); }
+  const text = tr('Join me on GameShare! Room code: {code}', { code: state.code });
+  try { await navigator.clipboard.writeText(text); toast(tr('Invite copied. Paste it to your friends.'), 'ok'); }
+  catch { toast(tr('Room code: {code}', { code: state.code })); }
 }
 
 // System-wide mute shortcuts: only while in a room, and only if wanted.
@@ -3143,7 +3212,7 @@ function init() {
     savePrefs();
     updateControls();
     pushOverlay();
-    if (prefs.overlay) toast('Overlay on: it shows who’s talking while you’re in another window, like your game.');
+    if (prefs.overlay) toast(tr('Overlay on: it shows who’s talking while you’re in another window, like your game.'));
   });
   $('#overlayCorner').addEventListener('change', (e) => {
     prefs.overlayCorner = e.target.value;
@@ -3181,6 +3250,10 @@ function init() {
     updateControls();
     if (prefs.sounds) cue('join');
   });
+  for (const s of document.querySelectorAll('.lang-select')) {
+    s.value = prefs.lang || 'auto';
+    s.addEventListener('change', (e) => setLanguage(e.target.value));
+  }
   $('#qualitySelect').value = state.quality;
   $('#qualitySelect').addEventListener('change', async (e) => {
     state.quality = e.target.value;
@@ -3191,7 +3264,7 @@ function init() {
       if (track) await applyCaptureQuality(track);
       for (const p of state.peers.values()) p.encSig = null;
       retuneAll();
-      toast('Quality updated');
+      toast(tr('Quality updated'));
     }
   });
   $('#movieBtn').addEventListener('click', () => {
@@ -3203,7 +3276,7 @@ function init() {
       for (const p of state.peers.values()) p.encSig = null;
       retuneAll();
       broadcast(myState()); // friends switch their cushion for my screen
-      toast(state.movie ? 'Movie mode on: friends see your screen about 1.5 s late' : 'Movie mode off');
+      toast(state.movie ? tr('Movie mode on: friends see your screen about 1.5 s late') : tr('Movie mode off'));
     }
   });
   updateControls();

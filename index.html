@@ -46,6 +46,14 @@
       </button>
 
       <p id="lobbyStatus" class="status" role="status"></p>
+      <label class="lobby-lang">
+        <span>Language</span>
+        <select id="lobbyLang" class="lang-select">
+          <option value="auto">Automatic</option>
+          <option value="en">English</option>
+          <option value="pt">Português (Brasil)</option>
+        </select>
+      </label>
       <div id="lobbyVersion" class="lobby-version"></div>
     </div>
   </section>
@@ -86,10 +94,10 @@
           <button id="deafenBtn" class="dock-btn" aria-pressed="false" title="Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)">
             <span class="i i-headphones" aria-hidden="true"></span><span class="ctrl-label">Mute voices</span>
           </button>
-          <button id="settingsBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Settings">
+          <button id="settingsBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Settings" data-label="Settings">
             <span class="i i-gear" aria-hidden="true"></span>
           </button>
-          <button id="leaveBtn" class="dock-btn danger" title="Leave the room">
+          <button id="leaveBtn" class="dock-btn danger" title="Leave the room" data-label="Leave">
             <span class="i i-leave" aria-hidden="true"></span>
           </button>
         </div>
@@ -139,6 +147,14 @@
           </div>
 
           <div class="menu-group">App</div>
+          <label class="menu-row">
+            <span class="menu-text"><b>Language</b></span>
+            <select id="menuLang" class="lang-select">
+              <option value="auto">Automatic</option>
+              <option value="en">English</option>
+              <option value="pt">Português (Brasil)</option>
+            </select>
+          </label>
           <div class="menu-row">
             <span class="menu-text"><b>In-game overlay</b><small>Shows who’s talking on top of your game. Works with borderless and windowed games.</small></span>
             <button id="overlayBtn" class="switch" role="switch" aria-checked="false" aria-label="In-game overlay"></button>
@@ -237,6 +253,7 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script src="node_modules/peerjs/dist/peerjs.min.js"></script>
+  <script src="i18n.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

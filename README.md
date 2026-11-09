@@ -51,7 +51,9 @@ The installer appears in the `dist/` folder:
 - **Voice:** your microphone (with a level meter: talk to test it), your speakers or headset, *Remove background noise* and *Headphones mode*.
 - **Room:** room size (host only).
 - **Sharing:** share quality and **Movie mode**.
-- **App:** the in-game overlay and its corner, sound effects for joins, leaves, shares and mute, whether the mute shortcuts work while a game has focus, and **Copy report** for troubleshooting.
+- **App:** the language, the in-game overlay and its corner, sound effects for joins, leaves, shares and mute, whether the mute shortcuts work while a game has focus, and **Copy report** for troubleshooting.
+
+**Language:** GameShare speaks English and Brazilian Portuguese (português do Brasil). It follows your computer's language; to change it, use the menu at the bottom of the start screen or **Settings → App → Language**. It switches right away, even in a room. Each player picks their own, so friends can use different languages in the same room, and invites copied in either language work for everyone. (The **Copy report** text stays in English.) To add a language, see the top of `i18n.js`.
 
 **Tips**
 
