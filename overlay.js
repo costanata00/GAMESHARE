@@ -15,18 +15,21 @@ function pill(key, make) {
 
 window.overlay.onState((s) => {
   document.body.className = s.corner || 'top left';
+  const labels = s.labels || {}; // in the app's language
   const want = [];
   if (s.me && s.me.muted) {
     want.push(pill('!muted', () => {
       const d = document.createElement('div'); d.className = 'pill warn';
-      d.innerHTML = '<span class="ic mic"></span><span class="nm">You’re muted</span>'; return d;
+      d.innerHTML = '<span class="ic mic"></span><span class="nm"></span>'; return d;
     }));
+    want[want.length - 1].querySelector('.nm').textContent = labels.muted || 'You’re muted';
   }
   if (s.me && s.me.deafened) {
     want.push(pill('!deaf', () => {
       const d = document.createElement('div'); d.className = 'pill warn';
-      d.innerHTML = '<span class="ic deaf"></span><span class="nm">Voices muted</span>'; return d;
+      d.innerHTML = '<span class="ic deaf"></span><span class="nm"></span>'; return d;
     }));
+    want[want.length - 1].querySelector('.nm').textContent = labels.deafened || 'Voices muted';
   }
   for (const t of s.talking || []) {
     const p = pill(t.key, () => {
