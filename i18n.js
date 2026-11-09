@@ -167,6 +167,11 @@ const PT = {
   'Share quality': 'Qualidade da transmissão',
   'For your own screen. Stays smooth when your PC or connection is busy.':
     'Da sua própria tela. Continua fluida quando seu PC ou sua conexão estão sobrecarregados.',
+  'Bitrate': 'Taxa de bits',
+  'The most each friend gets from you. Higher is sharper in fast games but uses more upload. Lower it if friends stutter.':
+    'O máximo que cada amigo recebe de você. Mais alta deixa jogos rápidos mais nítidos, mas usa mais upload. Abaixe se travar para os amigos.',
+  'Automatic ({n} Mbps)': 'Automática ({n} Mbps)',
+  'Bitrate updated': 'Taxa de bits atualizada',
   'Movie mode': 'Modo filme',
   'Steadier picture for movies and videos. Friends see your screen about 1.5 s late, so not for games.':
     'Imagem mais estável para filmes e vídeos. Seus amigos veem sua tela cerca de 1,5 s atrasada, então não é para jogos.',

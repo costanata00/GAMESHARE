@@ -43,6 +43,8 @@ const QUALITY = {
   '1080p30': { w: 1920, h: 1080, fps: 30, bitrate: 4_500_000 },
   '1080p60': { w: 1920, h: 1080, fps: 60, bitrate: 8_000_000 }
 };
+// Bitrate choices in Settings (kbps per friend). 'auto' = the preset's, ×1.5 in movie mode.
+const BITRATES = [3000, 5000, 8000, 12000, 16000, 20000];
 // All viewers of my screen together get at most this many times the preset's
 // bitrate, so a big room can't flood my upload (which makes everyone stutter).
 const UPLOAD_BUDGET = 2;
@@ -80,7 +82,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto' };
+              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto', bitrate: 'auto' };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -90,6 +92,7 @@ const prefs = (() => {
     localStorage.removeItem('gs-people');
   } catch { /* ignore */ }
   if (!QUALITY[d.quality]) d.quality = '1080p30';
+  if (!BITRATES.includes(Number(d.bitrate))) d.bitrate = 'auto';
   d.roomSize = Math.min(MAX_LIMIT, Math.max(MIN_SIZE, Number(d.roomSize) || DEFAULT_SIZE));
   return d;
 })();
@@ -1544,7 +1547,7 @@ function sendScreenTo(p) {
 // actually changed (every change can cause a tiny hiccup).
 async function tuneSenders(pc, p) {
   const q = QUALITY[state.quality];
-  const rate = q.bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
+  const rate = shareBitrate();
   const v = p && p.view;
   const track = state.screen && state.screen.getVideoTracks()[0];
   const srcH = (track && track.getSettings().height) || q.h;
@@ -1683,6 +1686,24 @@ async function checkStuckShares() {
       note(`my screen to ${p.name} keeps shrinking: leaving it alone for ${STUCK.restMs / 60000} min`);
     }
   }
+}
+
+// The most one friend can get from my screen (bits/s) before it's sized to
+// how big they watch it: the bitrate picked in Settings, or the preset's.
+function shareBitrate() {
+  const kbps = Number(prefs.bitrate);
+  if (BITRATES.includes(kbps)) return kbps * 1000;
+  return QUALITY[state.quality].bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
+}
+
+// Settings → Bitrate: the Automatic choice says what it currently means.
+function updateBitrateUi() {
+  const sel = $('#bitrateSelect');
+  if (!sel) return;
+  const auto = QUALITY[state.quality].bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
+  const mbps = (auto / 1e6).toLocaleString(i18n.current() === 'pt' ? 'pt-BR' : 'en', { maximumFractionDigits: 2 });
+  sel.querySelector('option[value="auto"]').textContent = tr('Automatic ({n} Mbps)', { n: mbps });
+  sel.value = String(prefs.bitrate);
 }
 
 // Someone started/stopped watching: everyone's slice of the budget changes.
@@ -2798,7 +2819,7 @@ async function diagnostics() {
     L.push(`Room ${state.code}: ${greetedCount()}/${state.maxPeople} players · host: ${holderName()}`);
     L.push(`Me (${state.name}): ${state.muted ? 'muted' : 'mic on'}${state.micReal ? '' : ' (no microphone found)'} · ${state.deafened ? 'voices muted' : 'hearing voices'} · ${state.screen ? 'sharing' : 'not sharing'}`);
   }
-  L.push(`Settings: quality ${state.quality} · movie mode ${state.movie ? 'on' : 'off'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
+  L.push(`Settings: quality ${state.quality} · bitrate ${prefs.bitrate === 'auto' ? 'auto' : prefs.bitrate + ' kbps'} (${Math.round(shareBitrate() / 1000)} kbps per friend) · movie mode ${state.movie ? 'on' : 'off'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
   L.push(`Devices: microphone "${sel('#micSelect')}" · output "${sel('#outSelect')}"`);
   for (const p of state.peers.values()) {
     if (!p.greeted) continue;
@@ -2876,6 +2897,7 @@ function updateControls() {
   deafBtn.title = state.deafened ? tr('Hear everyone’s voice again (Ctrl+Shift+D)') : tr('Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)');
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
   $('#movieBtn').setAttribute('aria-checked', String(state.movie));
+  updateBitrateUi();
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
   $('#globalKeysBtn').setAttribute('aria-checked', String(prefs.globalKeys !== false));
   $('#noiseBtn').setAttribute('aria-checked', String(prefs.noiseRemoval !== false && !mic.failed));
@@ -3368,11 +3390,21 @@ function init() {
     s.value = prefs.lang || 'auto';
     s.addEventListener('change', (e) => setLanguage(e.target.value));
   }
+  $('#bitrateSelect').addEventListener('change', (e) => {
+    prefs.bitrate = BITRATES.includes(Number(e.target.value)) ? Number(e.target.value) : 'auto';
+    savePrefs();
+    if (state.screen) {
+      for (const p of state.peers.values()) p.encSig = null;
+      retuneAll();
+      toast(tr('Bitrate updated'));
+    }
+  });
   $('#qualitySelect').value = state.quality;
   $('#qualitySelect').addEventListener('change', async (e) => {
     state.quality = e.target.value;
     prefs.quality = state.quality;
     savePrefs();
+    updateBitrateUi();
     if (state.screen) {
       const track = state.screen.getVideoTracks()[0];
       if (track) await applyCaptureQuality(track);
