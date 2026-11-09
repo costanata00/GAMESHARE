@@ -49,6 +49,12 @@ const MIN_VIEWER_BITRATE = 350_000;
 // Incoming screens play this far behind live so late packets still make it
 // (grows by itself if freezes still happen). Voice is not delayed.
 const SCREEN_BUFFER_MS = 200, SCREEN_BUFFER_MAX = 600;
+// Movie mode (the sharer turns it on): friends play that screen well behind
+// live, which absorbs hiccups for a steady picture, and the sharer's encoder
+// gets more bitrate so it drops fewer frames. Voice is still not delayed.
+const MOVIE_BUFFER_MS = 1500, MOVIE_BUFFER_MAX = 3000, MOVIE_BITRATE_BOOST = 1.5;
+const bufferBase = (p) => (p.screenMovie ? MOVIE_BUFFER_MS : SCREEN_BUFFER_MS);
+const bufferMax = (p) => (p.screenMovie ? MOVIE_BUFFER_MAX : SCREEN_BUFFER_MAX);
 // Heights a viewer can ask for. Coarse steps so small resizes don't churn the encoder.
 const VIEW_STEPS = [360, 540, 720, 1080];
 // Self-healing links. Friends ping each other every second; a link that
@@ -73,7 +79,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false };
+              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -105,6 +111,7 @@ const state = {
   screenSound: { sound: 'none' }, // what sound my share carries (shown to viewers)
   headphones: prefs.headphones,   // headphones mode: echo cancellation off = cleaner voice
   quality: prefs.quality,
+  movie: prefs.movie === true, // movie mode for my share: steadier picture, more delay for viewers
   peers: new Map(),     // peerId -> PeerInfo
   leaving: false,
   joinTimer: null,
@@ -715,7 +722,8 @@ function broadcast(msg) {
 }
 
 function myState() {
-  return { type: 'state', name: state.name, muted: state.muted, sharing: !!state.screen, deafened: state.deafened, color: state.color };
+  return { type: 'state', name: state.name, muted: state.muted, sharing: !!state.screen, deafened: state.deafened, color: state.color,
+           movie: !!state.screen && state.movie };
 }
 
 // joining: I'm not in the room yet (the host answers with a welcome even if it
@@ -1223,6 +1231,7 @@ function onMessage(conn, msg) {
       if (Number.isInteger(msg.color) && msg.color >= 0 && msg.color < PLAYER_COLORS.length) p.color = msg.color;
       noteSharing(p, !!msg.sharing);
       if (!p.sharing) p.hidden = false;
+      setScreenMovie(p, !!msg.sharing && !!msg.movie);
       checkColorClash();
       renderPeople();
       break;
@@ -1340,9 +1349,19 @@ function applyScreenBuffer(p) {
   if (!pc) return;
   for (const r of pc.getReceivers()) {
     if (r.track && 'jitterBufferTarget' in r) {
-      try { r.jitterBufferTarget = p.screenBuffer || SCREEN_BUFFER_MS; } catch { /* ignore */ }
+      try { r.jitterBufferTarget = p.screenBuffer || bufferBase(p); } catch { /* ignore */ }
     }
   }
+}
+
+// A friend turned movie mode on or off for their share: start over from the
+// matching cushion.
+function setScreenMovie(p, on) {
+  if (!!p.screenMovie === on) return;
+  p.screenMovie = on;
+  p.screenBuffer = bufferBase(p);
+  p.freezePrev = null;
+  applyScreenBuffer(p);
 }
 
 // Every few seconds: if a friend's screen froze, give it a bigger cushion;
@@ -1358,12 +1377,12 @@ async function adaptScreenBuffers() {
     if (freezes == null) continue;
     const now = performance.now();
     if (p.freezePrev == null) { p.freezePrev = freezes; p.calmSince = now; continue; }
-    const before = p.screenBuffer || SCREEN_BUFFER_MS;
+    const before = p.screenBuffer || bufferBase(p);
     if (freezes > p.freezePrev) {
-      p.screenBuffer = Math.min(SCREEN_BUFFER_MAX, before + 100);
+      p.screenBuffer = Math.min(bufferMax(p), before + (p.screenMovie ? 250 : 100));
       p.calmSince = now;
-    } else if (now - p.calmSince > 30000 && before > SCREEN_BUFFER_MS) {
-      p.screenBuffer = Math.max(SCREEN_BUFFER_MS, before - 50);
+    } else if (now - p.calmSince > 30000 && before > bufferBase(p)) {
+      p.screenBuffer = Math.max(bufferBase(p), before - (p.screenMovie ? 125 : 50));
       p.calmSince = now;
     }
     p.freezePrev = freezes;
@@ -1445,7 +1464,8 @@ function onIncomingCall(call) {
     p.screenSound = snd && typeof snd === 'object'
       ? { sound: String(snd.sound || 'none'), app: snd.app ? String(snd.app).slice(0, 60) : null }
       : null; // null = friend runs an older GameShare that doesn't say
-    p.screenBuffer = SCREEN_BUFFER_MS;
+    p.screenMovie = !!(call.metadata && call.metadata.movie);
+    p.screenBuffer = bufferBase(p);
     p.freezePrev = null;
     call.on('stream', (remote) => {
       if (p.screenIn !== call) return;
@@ -1488,7 +1508,7 @@ function watchIce(call) {
 function sendScreenTo(p) {
   if (!state.screen || !state.peer || state.peer.disconnected) return;
   if (p.screenOut) { const old = p.screenOut; p.screenOut = null; try { old.close(); } catch { /* ignore */ } }
-  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound }, sdpTransform: screenSdp });
+  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, movie: state.movie }, sdpTransform: screenSdp });
   if (!call) return;
   call.gsAt = performance.now();
   p.screenOut = call;
@@ -1506,18 +1526,19 @@ function sendScreenTo(p) {
 // actually changed (every change can cause a tiny hiccup).
 async function tuneSenders(pc, p) {
   const q = QUALITY[state.quality];
+  const rate = q.bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
   const v = p && p.view;
   const track = state.screen && state.screen.getVideoTracks()[0];
   const srcH = (track && track.getSettings().height) || q.h;
   const watching = [...state.peers.values()].filter((x) => x.screenOut && !x.lost && !(x.view && x.view.paused)).length;
   // Until a viewer says how big they show it, a room with several viewers starts at 720p.
   const scale = v && v.h ? Math.max(1, srcH / v.h) : (watching > 2 ? Math.max(1, srcH / 720) : 1);
-  const slice = (q.bitrate * UPLOAD_BUDGET) / Math.max(1, watching);
+  const slice = (rate * UPLOAD_BUDGET) / Math.max(1, watching);
   const active = !(v && v.paused);
   const want = {
     active,
     scale: Math.round(scale * 100) / 100,
-    bitrate: Math.round(Math.max(MIN_VIEWER_BITRATE, Math.min(q.bitrate / Math.pow(scale, 1.5), slice))),
+    bitrate: Math.round(Math.max(MIN_VIEWER_BITRATE, Math.min(rate / Math.pow(scale, 1.5), slice))),
     fps: q.fps
   };
   const sig = JSON.stringify(want);
@@ -2578,10 +2599,11 @@ async function updateStats() {
         lines.push(describeOut(p.name, s, p, compact));
         if (s && s.impl && !enc) enc = compact ? (s.hw == null ? '' : `${s.hw ? 'hardware' : 'software'} encoding`) : coder(s, 'encoding');
       }
-      text = lines.length ? [...lines, enc].filter(Boolean).join('\n') : 'Nobody is watching yet';
+      text = lines.length ? [...lines, enc, state.movie ? 'movie mode' : ''].filter(Boolean).join('\n') : 'Nobody is watching yet';
     } else {
       const p = state.peers.get(id);
       text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact) : 'reconnecting…';
+      if (p && p.screenIn && p.screenMovie) text += compact ? ' · movie' : '\nmovie mode';
     }
     if (box.textContent !== text) box.textContent = text;
   }
@@ -2620,14 +2642,14 @@ async function diagnostics() {
     L.push(`Room ${state.code}: ${greetedCount()}/${state.maxPeople} players · host: ${holderName()}`);
     L.push(`Me (${state.name}): ${state.muted ? 'muted' : 'mic on'}${state.micReal ? '' : ' (no microphone found)'} · ${state.deafened ? 'voices muted' : 'hearing voices'} · ${state.screen ? 'sharing' : 'not sharing'}`);
   }
-  L.push(`Settings: quality ${state.quality} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
+  L.push(`Settings: quality ${state.quality} · movie mode ${state.movie ? 'on' : 'off'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
   L.push(`Devices: microphone "${sel('#micSelect')}" · output "${sel('#outSelect')}"`);
   for (const p of state.peers.values()) {
     if (!p.greeted) continue;
     L.push('');
     L.push(`${p.name} (GameShare ${p.version || 'older than 1.2'}): ${p.lost ? `RECONNECTING for ${Math.round((performance.now() - p.lost) / 1000)} s` : 'connected'} · ${netText(p.net)}`);
     L.push(`  link ${health(p.conn)} · voice ${health(p.voice)}${p.localMuted ? ' (muted by me)' : ''}${p.muted ? ' · their mic is off' : ''}`);
-    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in')).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : ''));
+    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in')).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + (p.screenMovie ? ' · movie mode' : ''));
     else if (p.sharing) L.push(`  their screen: ${p.hidden ? 'closed by me' : 'not received'}`);
     if (p.screenOut) {
       const s = await callStats(p.screenOut, 'out');
@@ -2696,6 +2718,7 @@ function updateControls() {
   micBtn.title = state.muted ? 'Unmute your mic (Ctrl+Shift+M)' : 'Mute your mic (Ctrl+Shift+M)';
   deafBtn.title = state.deafened ? 'Hear everyone’s voice again (Ctrl+Shift+D)' : 'Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)';
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
+  $('#movieBtn').setAttribute('aria-checked', String(state.movie));
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
   $('#globalKeysBtn').setAttribute('aria-checked', String(prefs.globalKeys !== false));
   $('#noiseBtn').setAttribute('aria-checked', String(prefs.noiseRemoval !== false && !mic.failed));
@@ -3169,6 +3192,18 @@ function init() {
       for (const p of state.peers.values()) p.encSig = null;
       retuneAll();
       toast('Quality updated');
+    }
+  });
+  $('#movieBtn').addEventListener('click', () => {
+    state.movie = !state.movie;
+    prefs.movie = state.movie;
+    savePrefs();
+    updateControls();
+    if (state.screen) {
+      for (const p of state.peers.values()) p.encSig = null;
+      retuneAll();
+      broadcast(myState()); // friends switch their cushion for my screen
+      toast(state.movie ? 'Movie mode on: friends see your screen about 1.5 s late' : 'Movie mode off');
     }
   });
   updateControls();

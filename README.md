@@ -50,7 +50,7 @@ The installer appears in the `dist/` folder:
 **Settings** (bottom of the panel):
 - **Voice:** your microphone (with a level meter: talk to test it), your speakers or headset, *Remove background noise* and *Headphones mode*.
 - **Room:** room size (host only).
-- **Sharing:** share quality.
+- **Sharing:** share quality and **Movie mode**.
 - **App:** the in-game overlay and its corner, sound effects for joins, leaves, shares and mute, whether the mute shortcuts work while a game has focus, and **Copy report** for troubleshooting.
 
 **Tips**
@@ -61,6 +61,7 @@ The installer appears in the `dist/` folder:
 - **Wearing headphones? Turn on _Headphones mode_ in Settings.** It switches off echo cancellation, which otherwise clips your voice whenever other sound is playing and is the most common cause of choppy-sounding voice. Leave it off if you use speakers, or friends will hear themselves echo.
 - Voice is sent with a backup copy of each packet and gets priority over screen video, so it holds up on a busy or slightly lossy connection. If the person sharing sounds choppy, their PC or upload is overloaded: they can set Share quality to `720p, 30 fps` in Settings.
 - **Smooth streaming:** shared screens keep their frame rate when the sharer's PC or connection is busy (the picture gets a little softer instead of stuttering). Each viewer plays friends' screens about 0.2 s behind live so late packets still arrive in time, and if freezes still happen that cushion grows by itself (up to 0.6 s) and shrinks back once things are calm. Voice is never delayed.
+- **Watching a movie or video together?** The person sharing turns on **Movie mode** (Settings → Sharing). Friends then play that screen about 1.5 s behind live instead of 0.2 s, so the picture stays steady through hiccups, and the sharer's PC sends it with 1.5× the bitrate so fewer frames get dropped. Voices are not delayed, so when the sharer laughs you hear it a moment before you see the scene. Leave it off for games. Friends on an older GameShare still get the extra quality, just not the bigger cushion.
 - **Share quality** (Settings) affects your own share. Everyone watching you together gets at most about twice the quality's bitrate (about 9 Mbps at 1080p 30 fps, 16 Mbps at 60 fps), split between them, so a big room can't flood your upload. Drop to 720p if your upload is slow.
 - **Sharing sound (Windows 10 version 2004 or newer, and Windows 11):** tick the sound box in the share picker.
   - Sharing a **window** sends only that app's sound (the game, or the browser tab's video). Your call, Discord, music and everything else stay out.
