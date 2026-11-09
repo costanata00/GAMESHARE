@@ -395,8 +395,12 @@ function voiceSdp(sdp) {
 
 // Screen: prefer H.264, which most gaming PCs encode on the graphics card
 // instead of the processor. Falls back to VP8/VP9 automatically.
-// Start screen video at a decent bitrate instead of ramping up from blurry.
-function startBitrate(sdp, kbps) {
+// Start screen video at a decent bitrate instead of ramping up from blurry,
+// and never let the bandwidth estimate fall below a floor: a share squeezed to
+// a few dozen kbps sends so little that the estimate can't climb back, and the
+// picture stays tiny (seen: 320×180 at 39 kbps on a healthy link).
+const SCREEN_START_KBPS = 1500, SCREEN_MIN_KBPS = 250;
+function videoBitrates(sdp, startKbps, minKbps) {
   const lines = sdp.split('\r\n');
   const mIdx = lines.findIndex((l) => l.startsWith('m=video '));
   if (mIdx < 0) return sdp;
@@ -409,11 +413,12 @@ function startBitrate(sdp, kbps) {
   }
   for (const pt of pts) {
     const f = lines.findIndex((l, i) => i > mIdx && i < end && l.startsWith(`a=fmtp:${pt} `));
+    const add = [['x-google-start-bitrate', startKbps], ['x-google-min-bitrate', minKbps]];
     if (f >= 0) {
-      if (!/x-google-start-bitrate/.test(lines[f])) lines[f] += `;x-google-start-bitrate=${kbps}`;
+      for (const [k, v] of add) if (!lines[f].includes(k)) lines[f] += `;${k}=${v}`;
     } else {
       const r = lines.findIndex((l, i) => i > mIdx && i < end && l.startsWith(`a=rtpmap:${pt} `));
-      lines.splice(r + 1, 0, `a=fmtp:${pt} x-google-start-bitrate=${kbps}`);
+      lines.splice(r + 1, 0, `a=fmtp:${pt} ${add.map(([k, v]) => `${k}=${v}`).join(';')}`);
       end++;
     }
   }
@@ -422,7 +427,7 @@ function startBitrate(sdp, kbps) {
 
 function screenSdp(sdp) {
   sdp = preferCodecs(sdp, 'video', (name) => name === 'h264');
-  sdp = startBitrate(sdp, 1500);
+  sdp = videoBitrates(sdp, SCREEN_START_KBPS, SCREEN_MIN_KBPS);
   // Shared app sound is stereo music/game audio, not voice: give it room.
   const m = sdp.match(/a=rtpmap:(\d+) opus\/48000/);
   if (m) {
@@ -1555,6 +1560,7 @@ async function tuneSenders(pc, p) {
     fps: q.fps
   };
   const sig = JSON.stringify(want);
+  if (p) p.encWant = want;
   if (p && p.encSig === sig && p.encPc === pc) return;
   if (p) { p.encSig = sig; p.encPc = pc; }
   for (const sender of pc.getSenders()) {
@@ -1570,6 +1576,112 @@ async function tuneSenders(pc, p) {
     enc.priority = 'low';
     enc.networkPriority = 'low';
     try { await sender.setParameters(params); } catch (e) { console.warn('setParameters', e); if (p) p.encSig = null; }
+  }
+}
+
+/* Stuck shares. A moment of congestion or a busy PC makes WebRTC shrink the
+ * picture (it keeps the frame rate), and sometimes it never grows back, even
+ * once the link is fine again (seen: 320×180 for minutes on a clean link;
+ * reproduced in a test, where it stayed at 180p with 6 Mbps to spare).
+ * Reopening the screen fixed it by hand, because a new call starts fresh.
+ * So when a viewer gets far less than they asked for, for a while, on a link
+ * that looks healthy, while the encoder isn't even using half the bitrate it
+ * may (if it is, the picture is simply too busy for that bitrate and a smaller
+ * size is the right call), the sharer fixes it by itself:
+ *   1. nudge: briefly tell the encoder to keep the resolution, which drops the
+ *      stuck shrink in place, with no gap at all for the viewer;
+ *   2. if it gets stuck again soon: reopen the screen for that viewer
+ *      (a second or two of "Reconnecting…");
+ *   3. if even that doesn't hold, the link really is that slow: leave it be.
+ * A busy PC (limit "cpu") gets the nudge but never a reopen, which wouldn't
+ * make the PC any less busy. */
+const STUCK = {
+  ratio: 0.6,          // stuck: picture under 60% of the height the viewer asked for
+  used: 0.5,           // ...while sending under half the bitrate it's allowed
+  forMs: 20000,        // ...for this long, on a healthy link
+  settleMs: 30000,     // a new call gets this long to ramp up first
+  afterNudgeMs: 30000, // after a nudge, wait at least this long before the next step
+  afterReopenMs: 120000,
+  againMs: 300000,     // stuck again this soon after a fix counts as the fix not holding
+  restMs: 600000       // then rest this long
+};
+const newStuckWatch = () => ({ since: 0, last: -1e12, next: 0, tries: 0, restUntil: 0, sig: null });
+
+// One sample for one viewer. s: { h, wantH, healthy, sig, callAge, used, cpu }
+// (used: sent bitrate / allowed bitrate, null if not known yet).
+// Returns 'nudge', 'reopen', 'rest' (giving up for a while) or false.
+function stuckStep(w, s, now) {
+  if (w.sig !== s.sig) { w.sig = s.sig; w.since = 0; } // encoder settings changed: start over
+  if (!s.h || !s.wantH || s.callAge < STUCK.settleMs || !s.healthy || s.h >= s.wantH * STUCK.ratio ||
+      s.used == null || s.used >= STUCK.used) { w.since = 0; return false; }
+  if (!w.since) { w.since = now; return false; }
+  if (now - w.since < STUCK.forMs || now < w.next || now < w.restUntil) return false;
+  w.tries = now - w.last < STUCK.againMs ? w.tries + 1 : 1;
+  w.since = 0;
+  w.last = now;
+  if (w.tries === 1) { w.next = now + STUCK.afterNudgeMs; return 'nudge'; }
+  if (w.tries === 2 && !s.cpu) { w.next = now + STUCK.afterReopenMs; return 'reopen'; }
+  w.tries = 0;
+  w.restUntil = now + STUCK.restMs;
+  return 'rest';
+}
+
+// Drop a stuck shrink in place: a moment of "keep the resolution", then back.
+async function nudgeEncoder(pc) {
+  const set = async (pref) => {
+    for (const sender of pc.getSenders()) {
+      if (!sender.track || sender.track.kind !== 'video') continue;
+      const params = sender.getParameters();
+      if (!params.encodings || !params.encodings.length) continue;
+      params.degradationPreference = pref;
+      try { await sender.setParameters(params); } catch (e) { console.warn('nudge', e); }
+    }
+  };
+  await set('maintain-resolution');
+  await new Promise((r) => setTimeout(r, 1500));
+  if (pc.connectionState === 'connected') await set('maintain-framerate');
+}
+
+async function checkStuckShares() {
+  if (!state.screen) return;
+  const track = state.screen.getVideoTracks()[0];
+  const srcH = (track && track.getSettings().height) || QUALITY[state.quality].h;
+  for (const p of state.peers.values()) {
+    const call = p.screenOut;
+    const pc = call && call.peerConnection;
+    if (!p.stuck) p.stuck = newStuckWatch();
+    if (!pc || pc.connectionState !== 'connected' || p.lost || !p.encWant || !p.encWant.active) { p.stuck.since = 0; continue; }
+    let out = null, remote = null;
+    try {
+      (await pc.getStats()).forEach((r) => {
+        if (r.type === 'outbound-rtp' && r.kind === 'video') out = r;
+        if (r.type === 'remote-inbound-rtp' && r.kind === 'video') remote = r;
+      });
+    } catch { continue; }
+    if (!out || p.screenOut !== call || !state.screen) continue;
+    const now = performance.now();
+    const wantH = Math.round(srcH / p.encWant.scale);
+    // How much of its allowed bitrate the encoder is using (since the last look).
+    const prev = p.stuck.bytes;
+    p.stuck.bytes = { n: out.bytesSent || 0, t: now, call };
+    let used = prev && prev.call === call && now - prev.t > 1000
+      ? ((out.bytesSent - prev.n) * 8) / ((now - prev.t) / 1000) / p.encWant.bitrate : null;
+    if (!Number.isFinite(used)) used = null;
+    // Healthy: the viewer reports little loss and a sane round trip.
+    const healthy = !!remote && (remote.fractionLost || 0) <= 0.02 && !(remote.roundTripTime > 0.25);
+    const v = stuckStep(p.stuck, { h: out.frameHeight || 0, wantH, healthy, sig: p.encSig, callAge: now - (call.gsAt || 0),
+                                   used, cpu: out.qualityLimitationReason === 'cpu' }, now);
+    if (!v) continue;
+    const why = `stuck at ${out.frameHeight}p (wanted ${wantH}p, using ${Math.round(used * 100)}% of its bitrate, limit: ${out.qualityLimitationReason || '?'}) on a healthy link`;
+    if (v === 'nudge') {
+      note(`my screen to ${p.name} ${why}: nudging the encoder`);
+      nudgeEncoder(pc);
+    } else if (v === 'reopen') {
+      note(`my screen to ${p.name} ${why} again: reopening it`);
+      sendScreenTo(p);
+    } else {
+      note(`my screen to ${p.name} keeps shrinking: leaving it alone for ${STUCK.restMs / 60000} min`);
+    }
   }
 }
 
@@ -1644,6 +1756,7 @@ function stopShare() {
   state.previewHidden = false;
   for (const p of state.peers.values()) {
     p.unwatched = false;
+    p.stuck = null;
     const c = p.screenOut;
     p.screenOut = null;
     try { c && c.close(); } catch { /* ignore */ }
@@ -2746,6 +2859,7 @@ async function pollNet() {
     } catch { /* ignore */ }
   }
   await adaptScreenBuffers();
+  await checkStuckShares();
   if (document.body.dataset.view === 'room') renderPeople();
 }
 
