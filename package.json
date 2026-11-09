@@ -28,6 +28,7 @@
       "main.js",
       "preload.js",
       "index.html",
+      "i18n.js",
       "renderer.js",
       "styles.css",
       "node_modules/peerjs/dist/peerjs.min.js",

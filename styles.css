@@ -173,6 +173,9 @@ button { -webkit-app-region: no-drag; }
 .status { min-height: 20px; margin: 14px 0 0; font-size: 13px; color: var(--muted); }
 .status.err { color: var(--live); }
 .lobby-version { position: absolute; right: 16px; bottom: 12px; font-size: 11px; color: var(--faint); }
+.lobby-lang { position: absolute; left: 16px; bottom: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
+.lobby-lang select { background: transparent; border: 1px solid var(--ink-3); border-radius: 6px; padding: 2px 4px; color: var(--muted); font-size: 11px; cursor: pointer; }
+.lobby-lang select option { background: var(--ink-0); color: var(--text); }
 
 /* ---------- room ---------- */
 #room { display: grid; grid-template-columns: var(--panel-w) minmax(0, 1fr); }
@@ -312,8 +315,7 @@ button { -webkit-app-region: no-drag; }
 .dock-btn[aria-expanded="true"] { background: #2c2f38; }
 .dock-btn.danger { color: #ff8f9b; }
 .dock-btn.danger:hover { background: rgba(255,77,94,.16); color: #ffb3bc; }
-#settingsBtn::after { content: "Settings"; }
-#leaveBtn::after { content: "Leave"; }
+#settingsBtn::after, #leaveBtn::after { content: attr(data-label); }
 #settingsBtn::after, #leaveBtn::after { font-size: 11.5px; }
 
 /* collapsed: a slim rail of avatars and icons */
