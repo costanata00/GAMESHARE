@@ -82,7 +82,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto', bitrate: 'auto' };
+              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -2806,6 +2806,10 @@ async function diagnostics() {
   const L = [];
   L.push(`GameShare ${state.version} report, ${new Date().toString().slice(0, 24)}`);
   L.push(`System: ${info.os || navigator.platform} · Electron ${info.electron || '?'} · Chromium ${info.chrome || '?'}`);
+  if (upd.info) {
+    const u = upd.info;
+    L.push(`Updates: running ${u.version}${u.usingUpdate ? ` (in-app update, installer ${u.bundledVersion})` : ' (installer)'} · auto check ${prefs.updateCheck === false ? 'off' : 'on'}${upd.result ? ` · last check ${upd.result.status}${upd.result.error ? ': ' + upd.result.error : ''}` : ''}`);
+  }
   if (info.gpu) {
     const g = info.gpu;
     L.push(`Graphics: compositing ${g.gpu_compositing || '?'} · video decode ${g.video_decode || '?'} · video encode ${g.video_encode || '?'}`);
@@ -2930,6 +2934,7 @@ function setLanguage(pref) {
     updateNetBadge();
   }
   refreshDevices();
+  renderUpdate();
   if (!$('#picker').classList.contains('hidden')) renderSources();
   if (prefs.stats) updateStats();
   pushOverlay();
@@ -3279,6 +3284,199 @@ function closeSettings() {
 
 /* ------------------------------------------------------------ wiring */
 
+/* ------------------------------------------------------------ updates
+ * Optional in-app updates of GameShare's own code (see updater.js). We look
+ * for a new version when the app opens (unless turned off in Settings) and
+ * offer it on the start screen. Nothing downloads until you click Update,
+ * and the new version starts the next time GameShare opens (or right away
+ * with Restart now, never in the middle of a call). */
+
+const upd = {
+  info: null,        // { enabled, version, bundledVersion, usingUpdate, pending, page }
+  result: null,      // last check: { status, version, notes, error }
+  checking: false,
+  downloading: false,
+  progress: 0,
+  dismissed: false,  // "Not now" for this session
+  reverted: false,
+  timer: null
+};
+
+async function checkForUpdate(manual = false) {
+  if (upd.checking || upd.downloading) return;
+  upd.checking = true;
+  if (manual) upd.dismissed = false;
+  renderUpdate();
+  try {
+    upd.result = await window.gameshare.checkUpdate();
+    if (upd.result && upd.result.status === 'error') note(`update check failed: ${upd.result.error}`);
+  } catch (e) {
+    upd.result = { status: 'error', error: e.message };
+  }
+  upd.info = await window.gameshare.updateInfo().catch(() => upd.info);
+  upd.checking = false;
+  renderUpdate();
+}
+
+async function startUpdate() {
+  const r = upd.result;
+  if (!r || upd.downloading) return;
+  if (r.status === 'install') { window.open(upd.info?.page || r.page, '_blank'); return; }
+  if (r.status !== 'available') return;
+  upd.downloading = true;
+  upd.progress = 0;
+  renderUpdate();
+  const res = await window.gameshare.downloadUpdate().catch((e) => ({ ok: false, error: e.message }));
+  upd.downloading = false;
+  if (res && res.ok) {
+    upd.result = { ...r, status: 'ready' };
+    upd.reverted = false;
+    if (document.body.dataset.view === 'room') toast(tr('GameShare {v} starts the next time you open GameShare.', { v: r.version }), 'ok');
+  } else {
+    toast(tr('Update failed: {error}', { error: (res && res.error) || '?' }), 'err');
+  }
+  upd.info = await window.gameshare.updateInfo().catch(() => upd.info);
+  renderUpdate();
+}
+
+function renderUpdate() {
+  const r = upd.result;
+  const v = r && r.version;
+  const inRoom = document.body.dataset.view === 'room';
+
+  // Start screen card
+  const card = $('#updateCard');
+  const offer = r && ['available', 'install', 'ready'].includes(r.status);
+  const skipped = offer && r.status !== 'ready' && prefs.skipUpdate === v;
+  card.classList.toggle('hidden', !(offer || upd.downloading) || upd.dismissed || skipped);
+  card.querySelector('.update-bar').classList.toggle('hidden', !upd.downloading);
+  $('#updateBar').style.width = `${Math.round(upd.progress * 100)}%`;
+  const go = $('#updateGo');
+  const later = $('#updateLater');
+  const skip = $('#updateSkip');
+  go.disabled = false;
+  if (upd.downloading) {
+    $('#updateTitle').textContent = tr('Downloading GameShare {v}… {p}%', { v, p: Math.round(upd.progress * 100) });
+    $('#updateNotes').textContent = '';
+    for (const b of [go, later, skip]) b.classList.add('hidden');
+  } else if (r && r.status === 'ready') {
+    $('#updateTitle').textContent = tr('GameShare {v} is ready', { v });
+    $('#updateNotes').textContent = tr('It starts the next time you open GameShare.');
+    go.textContent = tr('Restart now');
+    later.textContent = tr('Later');
+    go.classList.remove('hidden'); later.classList.remove('hidden'); skip.classList.add('hidden');
+  } else if (offer) {
+    $('#updateTitle').textContent = tr('GameShare {v} is available', { v });
+    $('#updateNotes').textContent = r.status === 'install'
+      ? tr('This version needs a fresh install. Download it and run the installer.')
+      : (r.notes || '');
+    go.textContent = r.status === 'install' ? tr('Download') : tr('Update');
+    later.textContent = tr('Not now');
+    for (const b of [go, later, skip]) b.classList.remove('hidden');
+  }
+
+  // Settings → App
+  $('#updateCheckSwitch').setAttribute('aria-checked', String(prefs.updateCheck !== false));
+  const info = upd.info;
+  const status = $('#updateStatus');
+  const btn = $('#updateMenuBtn');
+  btn.classList.remove('hidden');
+  btn.disabled = false;
+  btn.textContent = tr('Check now');
+  let text = '';
+  if (info && !info.enabled) {
+    text = tr('Updates aren’t set up in this copy of GameShare.');
+    btn.disabled = true;
+  } else if (upd.checking) {
+    text = tr('Checking…');
+    btn.disabled = true;
+  } else if (upd.downloading) {
+    text = tr('Downloading… {p}%', { p: Math.round(upd.progress * 100) });
+    btn.disabled = true;
+  } else if ((r && r.status === 'ready') || (info && info.pending && !upd.reverted)) {
+    text = tr('GameShare {v} starts the next time you open GameShare.', { v: v || info.pending });
+    if (inRoom) btn.classList.add('hidden'); else btn.textContent = tr('Restart now');
+  } else if (r && r.status === 'available') {
+    text = tr('GameShare {v} is available', { v });
+    btn.textContent = tr('Update');
+  } else if (r && r.status === 'install') {
+    text = tr('GameShare {v} needs a fresh install.', { v });
+    btn.textContent = tr('Download');
+  } else if (r && r.status === 'latest') {
+    text = tr('You have the latest version.');
+  } else if (r && r.status === 'error') {
+    text = tr('Couldn’t check for updates ({error}).', { error: r.error });
+  } else if (info) {
+    text = tr('Version {v}', { v: info.version });
+  }
+  if (info && info.usingUpdate) {
+    text += ' ' + (upd.reverted
+      ? tr('Goes back to {v} the next time you open GameShare.', { v: info.bundledVersion })
+      : tr('Installed version: {v}.', { v: info.bundledVersion }));
+  }
+  status.textContent = text.trim();
+  const revert = $('#updateRevertBtn');
+  revert.classList.toggle('hidden', !(info && info.usingUpdate) || upd.reverted);
+  if (info) revert.textContent = tr('Back to {v}', { v: info.bundledVersion });
+}
+
+function onUpdateMenuBtn() {
+  const r = upd.result;
+  const info = upd.info;
+  if ((r && r.status === 'ready') || (info && info.pending && !upd.reverted)) {
+    window.gameshare.restartToUpdate();
+  } else if (r && (r.status === 'available' || r.status === 'install')) {
+    startUpdate();
+  } else {
+    checkForUpdate(true);
+  }
+}
+
+function initUpdates() {
+  window.gameshare.onUpdateProgress((p) => { upd.progress = Number(p) || 0; renderUpdate(); });
+  $('#updateGo').addEventListener('click', () => {
+    if (upd.result && upd.result.status === 'ready') window.gameshare.restartToUpdate();
+    else startUpdate();
+  });
+  $('#updateLater').addEventListener('click', () => { upd.dismissed = true; renderUpdate(); });
+  $('#updateSkip').addEventListener('click', () => {
+    if (upd.result) prefs.skipUpdate = upd.result.version;
+    savePrefs();
+    renderUpdate();
+  });
+  $('#updateMenuBtn').addEventListener('click', onUpdateMenuBtn);
+  $('#updateRevertBtn').addEventListener('click', async () => {
+    const res = await window.gameshare.revertUpdate().catch(() => null);
+    if (!res || !res.ok) return;
+    upd.reverted = true;
+    if (upd.result && upd.result.status === 'ready') upd.result = null;
+    if (res.version) prefs.skipUpdate = res.version; // don't offer the same one again right away
+    savePrefs();
+    renderUpdate();
+  });
+  $('#updateCheckSwitch').addEventListener('click', () => {
+    prefs.updateCheck = prefs.updateCheck === false;
+    savePrefs();
+    renderUpdate();
+    setupUpdateTimer();
+    if (prefs.updateCheck) checkForUpdate();
+  });
+
+  window.gameshare.updateInfo().then((info) => {
+    upd.info = info;
+    renderUpdate();
+    if (info && info.enabled && prefs.updateCheck !== false) setTimeout(() => checkForUpdate(), 4000);
+  }).catch(() => {});
+  setupUpdateTimer();
+}
+
+function setupUpdateTimer() {
+  clearInterval(upd.timer);
+  if (prefs.updateCheck === false) return;
+  // Long sessions: look again every 6 hours (just a small request).
+  upd.timer = setInterval(() => { if (upd.info && upd.info.enabled) checkForUpdate(); }, 6 * 3600 * 1000);
+}
+
 function init() {
   document.body.dataset.view = 'lobby';
   try { $('#nameInput').value = localStorage.getItem('gs-name') || ''; } catch { /* ignore */ }
@@ -3522,6 +3720,9 @@ function init() {
     prefs.inRoom = false;
     savePrefs();
   }
+
+  initUpdates();
+  window.gameshare.ready(); // started fine: keeps an in-app update from being rolled back
 }
 
 init();

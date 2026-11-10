@@ -46,6 +46,18 @@
       </button>
 
       <p id="lobbyStatus" class="status" role="status"></p>
+      <div id="updateCard" class="update-card hidden" role="status">
+        <div class="update-text">
+          <b id="updateTitle"></b>
+          <small id="updateNotes"></small>
+        </div>
+        <div class="update-bar hidden"><i id="updateBar"></i></div>
+        <div class="update-actions">
+          <button id="updateGo" class="btn primary menu-btn"></button>
+          <button id="updateLater" class="btn ghost menu-btn">Not now</button>
+          <button id="updateSkip" class="update-skip" type="button">Skip this version</button>
+        </div>
+      </div>
       <label class="lobby-lang">
         <span>Language</span>
         <select id="lobbyLang" class="lang-select">
@@ -192,6 +204,17 @@
             <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd> mute</div>
             <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd> mute voices</div>
             <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd> collapse the panel</div>
+          </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Check for updates</b><small>Looks for a new GameShare when it opens. Nothing is installed unless you say so.</small></span>
+            <button id="updateCheckSwitch" class="switch" role="switch" aria-checked="true" aria-label="Check for updates"></button>
+          </div>
+          <div class="menu-row stack">
+            <span class="menu-text"><b>Updates</b><small id="updateStatus"></small></span>
+            <span class="update-btns">
+              <button id="updateRevertBtn" class="btn ghost menu-btn hidden"></button>
+              <button id="updateMenuBtn" class="btn menu-btn">Check now</button>
+            </span>
           </div>
           <div class="menu-row">
             <span class="menu-text"><b>Something not working?</b><small>Copies a report on your connection, devices and settings to paste to whoever helps you. Screens also have a Stats button.</small></span>

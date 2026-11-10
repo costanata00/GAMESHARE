@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const os = require('os');
+const updater = require('./updater.js');
 
 let win = null;
 let cachedSources = new Map(); // id -> DesktopCapturerSource from the last listing
@@ -315,7 +316,9 @@ function helperCommand(mode, arg) {
     return { cmd: process.execPath, args: [process.env.GAMESHARE_AUDIO_HELPER, mode, arg],
              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } };
   }
-  const exe = path.join(__dirname, 'bin', 'win32-x64', 'GameShareAudio.exe')
+  // The helper always comes from the installed copy (in-app updates carry only code).
+  const base = (global.gsBoot && global.gsBoot.bundledDir) || __dirname;
+  const exe = path.join(base, 'bin', 'win32-x64', 'GameShareAudio.exe')
     .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
   return { cmd: exe, args: [mode, arg], env: process.env };
 }
@@ -333,6 +336,22 @@ function stopAppAudio() {
 }
 
 ipcMain.handle('app-audio-supported', () => appAudioSupported());
+
+/* ----------------------------------------------------------------- updates
+ * See updater.js. The page asks; nothing downloads unless the user says so. */
+ipcMain.on('app-ready', () => updater.markGood());
+ipcMain.handle('update-info', () => updater.info());
+ipcMain.handle('update-check', () => updater.check());
+ipcMain.handle('update-download', (event) => {
+  const sender = event.sender;
+  return updater.download((p) => { if (!sender.isDestroyed()) sender.send('update-progress', p); });
+});
+ipcMain.handle('update-revert', () => updater.revert());
+ipcMain.handle('update-restart', (event) => {
+  if (inRoom.has(event.sender.id)) return false; // never restart in the middle of a call
+  updater.relaunch();
+  return true;
+});
 ipcMain.handle('app-version', () => require('./package.json').version);
 // For the troubleshooting report: system, versions and what the GPU does.
 ipcMain.handle('diag-info', () => {

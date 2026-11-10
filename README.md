@@ -76,6 +76,29 @@ The installer appears in the `dist/` folder:
 - If a full-screen game shows up black, switch the game to *Borderless windowed* mode, or share the whole screen instead of the window.
 - Each friend is sent your screen at the size they're actually watching it (smaller in a grid, full resolution in full screen), and nothing at all while they have GameShare minimized. That keeps your upload and your PC's load down while you play.
 
+## Updates
+
+GameShare can update itself, but only if you want it to. When it opens it looks for a newer version (a small request to GitHub). If there is one, the start screen offers **Update**, **Not now** or **Skip this version**. Nothing downloads until you click Update. The download is a few MB because it carries only GameShare's own code, not Electron. The new version starts the next time you open GameShare, or right away with **Restart now** (never in the middle of a call).
+
+In **Settings → App** you can turn off *Check for updates*, check by hand, or go **Back to** the version your installer came with.
+
+Updates are signed: GameShare only runs one signed with the maintainer's key. If an updated version fails to start twice in a row, GameShare goes back to the installed version by itself. Updates that need a newer Electron (or a new installer) show a **Download** button that opens the releases page instead.
+
+### Publishing an update (maintainer)
+
+One time:
+
+1. `npm run update:keygen`. This creates your signing key at `~/.gameshare/update-key.pem` and writes its public half into `boot.js`. **Back up the key and never commit it.** Whoever has it can push code to everyone's GameShare. If you lose it, friends need a new installer to keep getting updates.
+2. Build and hand out an installer with that key (`npm run dist`). Only installs from then on can update themselves.
+
+Each release:
+
+1. Bump `version` in `package.json` and commit.
+2. `npm run update:pack -- --notes "One or two lines about what's new"` makes `dist/update/gameshare-app-<version>.asar` and `dist/update/update.json`.
+3. On GitHub, create a release for that version and attach both files (plus the installers, if you built them). Mark it as the **latest** release. The app reads `releases/latest/download/update.json`, so the repository (or at least its releases) must be public.
+
+An in-app update can't change Electron, `boot.js` or the native audio helper (`bin/`). When you upgrade Electron's major version or change those, ship a new installer. Older installs then see *needs a fresh install* with a Download button.
+
 ## If friends can't connect
 
 Most home networks work out of the box. Very strict networks (some schools, offices, mobile hotspots) can block direct connections; PeerJS's free relay servers are tried automatically, but they're best-effort. If a friend can never connect, try a different network.
