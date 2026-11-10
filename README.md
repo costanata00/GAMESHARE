@@ -53,6 +53,14 @@ It's peer-to-peer. Audio and video go straight from PC to PC; a free public "mat
 - If a full-screen game shows up black, switch the game to *Borderless windowed* mode, or share the whole screen instead of the window.
 - Each friend is sent your screen at the size they're actually watching it (smaller in a grid, full resolution in full screen), and nothing at all while they have GameShare minimized. That keeps your upload and your PC's load down while you play.
 
+## Updates
+
+GameShare can update itself, but only if you want it to. When it opens it looks for a newer version (a small request to GitHub). If there is one, the start screen offers **Update**, **Not now** or **Skip this version**. Nothing downloads until you click Update. The download is a few MB because it carries only GameShare's own code, not Electron. The new version starts the next time you open GameShare, or right away with **Restart now** (never in the middle of a call).
+
+In **Settings → App** you can turn off *Check for updates*, check by hand, or go **Back to** the version your installer came with.
+
+Updates are signed: GameShare only runs one signed with the maintainer's key. If an updated version fails to start twice in a row, GameShare goes back to the installed version by itself. Updates that need a newer Electron (or a new installer) show a **Download** button that opens the releases page instead.
+
 ## If friends can't connect
 
 Most home networks work out of the box. Very strict networks (some schools, offices, mobile hotspots) can block direct connections; PeerJS's free relay servers are tried automatically, but they're best-effort. If a friend can never connect, try a different network.
