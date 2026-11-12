@@ -106,12 +106,26 @@
           <button id="deafenBtn" class="dock-btn" aria-pressed="false" title="Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)">
             <span class="i i-headphones" aria-hidden="true"></span><span class="ctrl-label">Mute voices</span>
           </button>
+          <button id="sbBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Soundboard: play a sound to everyone in the room">
+            <span class="i i-sounds" aria-hidden="true"></span><span class="ctrl-label">Sounds</span>
+          </button>
           <button id="settingsBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Settings" data-label="Settings">
             <span class="i i-gear" aria-hidden="true"></span>
           </button>
           <button id="leaveBtn" class="dock-btn danger" title="Leave the room" data-label="Leave">
             <span class="i i-leave" aria-hidden="true"></span>
           </button>
+        </div>
+
+        <div id="soundMenu" class="menu sound-menu hidden" role="dialog" aria-label="Soundboard">
+          <div class="menu-group">Soundboard</div>
+          <p class="sb-hint">Click a sound and everyone in the room hears it, even while you’re muted. Click it again to stop.</p>
+          <div id="sbGrid" class="sb-grid"></div>
+          <div class="sb-foot">
+            <button id="sbAdd" class="btn ghost sb-add">Add sounds…</button>
+            <input type="range" id="sbVolume" min="5" max="100" step="5" title="Soundboard volume" aria-label="Soundboard volume">
+          </div>
+          <input type="file" id="sbFile" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac,.opus,.webm" multiple hidden>
         </div>
 
         <div id="settingsMenu" class="menu hidden" role="dialog" aria-label="Settings">
