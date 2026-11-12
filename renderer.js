@@ -2940,10 +2940,11 @@ async function callStats(call, dir) {
   let st;
   try { st = await pc.getStats(); } catch { return null; }
   const byId = new Map();
-  let rtp = null, pairId = null;
+  let rtp = null, pairId = null, snd = null;
   st.forEach((r) => {
     byId.set(r.id, r);
     if (r.type === (dir === 'in' ? 'inbound-rtp' : 'outbound-rtp') && r.kind === 'video') rtp = r;
+    if (r.type === (dir === 'in' ? 'inbound-rtp' : 'outbound-rtp') && r.kind === 'audio') snd = r;
     if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
   });
   if (!rtp) return { state: pc.connectionState };
@@ -2953,8 +2954,9 @@ async function callStats(call, dir) {
   const now = performance.now();
   const bytes = dir === 'in' ? rtp.bytesReceived : rtp.bytesSent;
   const prev = lastSample.get(call);
+  const sndBytes = snd ? (dir === 'in' ? snd.bytesReceived : snd.bytesSent) || 0 : null;
   lastSample.set(call, { t: now, bytes, lost: rtp.packetsLost || 0, recv: rtp.packetsReceived || 0,
-                         delay: rtp.jitterBufferDelay || 0, emitted: rtp.jitterBufferEmittedCount || 0 });
+                         delay: rtp.jitterBufferDelay || 0, emitted: rtp.jitterBufferEmittedCount || 0, sndBytes });
   const dt = prev ? (now - prev.t) / 1000 : 0;
   const s = {
     state: pc.connectionState,
@@ -2962,7 +2964,9 @@ async function callStats(call, dir) {
     kbps: dt > 0.2 ? Math.max(0, Math.round(((bytes - prev.bytes) * 8) / dt / 1000)) : null,
     codec: codec && codec.mimeType ? codec.mimeType.split('/')[1] : '',
     rtt: pair && pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
-    relay: !!pair && (cand(pair.localCandidateId).candidateType === 'relay' || cand(pair.remoteCandidateId).candidateType === 'relay')
+    relay: !!pair && (cand(pair.localCandidateId).candidateType === 'relay' || cand(pair.remoteCandidateId).candidateType === 'relay'),
+    // the stream's sound (null: this share has none)
+    sndKbps: snd && dt > 0.2 && prev.sndBytes != null ? Math.max(0, Math.round(((sndBytes - prev.sndBytes) * 8) / dt / 1000)) : null
   };
   if (dir === 'in') {
     const lost = prev ? rtp.packetsLost - prev.lost : 0, got = prev ? rtp.packetsReceived - prev.recv : 0;
@@ -2970,6 +2974,11 @@ async function callStats(call, dir) {
     const emitted = prev ? rtp.jitterBufferEmittedCount - prev.emitted : 0;
     s.buffer = emitted > 0 ? Math.round(((rtp.jitterBufferDelay - prev.delay) / emitted) * 1000) : null;
     s.freezes = rtp.freezeCount || 0;
+    // Lip sync: both tracks say which moment of the sharer's clock they are
+    // playing right now. Positive = the sound is ahead of the picture.
+    // (As WebRTC sees it; avSync() adds what the sharer reported.)
+    s.sndAhead = snd && snd.estimatedPlayoutTimestamp && rtp.estimatedPlayoutTimestamp
+      ? Math.round(snd.estimatedPlayoutTimestamp - rtp.estimatedPlayoutTimestamp) : null;
     s.impl = rtp.decoderImplementation || '';
     s.hw = rtp.powerEfficientDecoder;
   } else {
@@ -2986,17 +2995,48 @@ const mbps = (kbps) => (kbps == null ? '…' : kbps >= 1000 ? `${(kbps / 1000).t
 const coder = (s, what, L = tr) => (s.hw == null ? (s.impl || '')
   : L(s.hw ? `hardware ${what}` : `software ${what}`) + (s.impl ? ` (${s.impl})` : ''));
 
+// How far the stream's sound is from its picture for me, in ms (positive =
+// the sound comes late), or null if unknown. What WebRTC measures between the
+// two tracks, plus the wait on the sharer's side that WebRTC can't see.
+function avSync(s, p) {
+  if (!s || s.sndAhead == null) return null;
+  return Math.round((p && p.audioDelay) || 0) - s.sndAhead;
+}
+function avSyncText(ms, L = tr) {
+  if (ms == null) return '';
+  if (Math.abs(ms) < 10) return L('sound in sync');
+  return ms > 0 ? L('sound {n} ms late', { n: ms }) : L('sound {n} ms early', { n: -ms });
+}
+
 // compact: for small screens (a strip thumbnail, your own preview).
-function describeIn(s, compact, L = tr) {
+// p: the friend whose screen it is (for the mode and the lip-sync line).
+function describeIn(s, compact, L = tr, p = null) {
   if (!s || !s.w) return s && s.state !== 'connected' ? L('not connected ({state})', { state: s.state }) : L('waiting for video…');
   const freezes = L(s.freezes === 1 ? '{n} freeze' : '{n} freezes', { n: s.freezes });
-  if (compact) return `${s.h}p · ${s.fps} fps · ${mbps(s.kbps)}\n${s.buffer != null ? `${L('{n} ms buffer', { n: s.buffer })} · ` : ''}${freezes}`;
+  const mode = p ? L(isVideo(p) ? 'Video mode' : 'Game mode') : '';
+  if (compact) return `${s.h}p · ${s.fps} fps · ${mbps(s.kbps)}\n${s.buffer != null ? `${L('{n} ms buffer', { n: s.buffer })} · ` : ''}${freezes}${p && isVideo(p) ? ` · ${L('video')}` : ''}`;
+  const target = p && p.screenBuffer ? ` (${L('aims for {n} ms', { n: p.screenBuffer })})` : '';
   return [
     `${s.w}×${s.h} · ${s.fps} fps · ${mbps(s.kbps)}`,
     [s.codec, coder(s, 'decoding', L)].filter(Boolean).join(' · '),
-    `${s.buffer != null ? `${L('buffer {n} ms', { n: s.buffer })} · ` : ''}${freezes} · ${L('{n}% lost', { n: s.loss.toFixed(1) })}`,
+    `${s.buffer != null ? `${L('buffer {n} ms', { n: s.buffer })}${target} · ` : ''}${freezes} · ${L('{n}% lost', { n: s.loss.toFixed(1) })}`,
+    [mode, s.sndKbps != null ? L('sound {n} kbps', { n: s.sndKbps }) : '', avSyncText(avSync(s, p), L)].filter(Boolean).join(' · '),
     `${s.relay ? L('via relay server') : L('direct')}${s.rtt != null ? ` · ping ${s.rtt} ms` : ''}`
-  ].join('\n');
+  ].filter(Boolean).join('\n');
+}
+
+// My own share, for my preview's stats and the report: mode, the frame rate
+// the shared window really produces, and the sound's bitrate and wait.
+function describeShare(sndKbps, compact, L = tr) {
+  const st = appAudio.stat;
+  const hasSound = !!state.screen && state.screen.getAudioTracks().length > 0;
+  if (compact) return state.mode === 'video' ? L('Video mode') : '';
+  return [
+    L(state.mode === 'video' ? 'Video mode' : 'Game mode'),
+    share.srcFps != null ? L('source {n} fps', { n: Math.round(share.srcFps) }) + (share.still ? ` (${L('still: keeping it sharp')})` : '') : '',
+    hasSound && sndKbps != null ? L('sound {n} kbps', { n: sndKbps }) : '',
+    hasSound && st && st.delayMs != null ? L('sound waits {n} ms', { n: Math.round(st.delayMs) }) : ''
+  ].filter(Boolean).join(' · ');
 }
 
 function describeOut(name, s, p, compact, L = tr) {
@@ -3029,18 +3069,19 @@ async function updateStats() {
     let text;
     if (t.isMe) {
       const lines = [];
-      let enc = '';
+      let enc = '', sndKbps = null;
       for (const p of state.peers.values()) {
         if (!p.greeted || !p.screenOut) continue;
         const s = await callStats(p.screenOut, 'out');
+        if (s && s.sndKbps != null) sndKbps = s.sndKbps;
         lines.push(describeOut(p.name, s, p, compact));
         if (s && s.impl && !enc) enc = compact ? (s.hw == null ? '' : tr(s.hw ? 'hardware encoding' : 'software encoding')) : coder(s, 'encoding');
       }
-      text = lines.length ? [...lines, enc, state.mode === 'video' ? tr('Video mode') : ''].filter(Boolean).join('\n') : tr('Nobody is watching yet');
+      text = lines.length ? [...lines, enc, describeShare(sndKbps, compact)].filter(Boolean).join('\n')
+        : [tr('Nobody is watching yet'), describeShare(null, compact)].filter(Boolean).join('\n');
     } else {
       const p = state.peers.get(id);
-      text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact) : tr('reconnecting…');
-      if (p && p.screenIn && isVideo(p)) text += compact ? ` · ${tr('video')}` : `\n${tr('Video mode')}`;
+      text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact, tr, p) : tr('reconnecting…');
     }
     if (box.textContent !== text) box.textContent = text;
   }
@@ -3085,16 +3126,20 @@ async function diagnostics() {
   }
   L.push(`Settings: quality ${state.quality} · bitrate ${prefs.bitrate === 'auto' ? 'auto' : prefs.bitrate + ' kbps'} (${Math.round(shareBitrate() / 1000)} kbps per friend) · sharing mode ${state.screen ? state.mode : prefs.shareMode + ' (not sharing)'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
   L.push(`Devices: microphone "${sel('#micSelect')}" · output "${sel('#outSelect')}"`);
+  if (state.screen) {
+    const st = appAudio.stat;
+    L.push(`My share: ${describeShare(null, false, trEn)}${st ? ` · sound buffer: reserve ${Math.round(st.marginMs)} ms, ran dry ${st.dry}× in the last second${appAudio.direct ? '' : ' · sound through the page (no direct line)'}` : ''}`);
+  }
   for (const p of state.peers.values()) {
     if (!p.greeted) continue;
     L.push('');
     L.push(`${p.name} (GameShare ${p.version || 'older than 1.2'}): ${p.lost ? `RECONNECTING for ${Math.round((performance.now() - p.lost) / 1000)} s` : 'connected'} · ${netText(p.net, trEn)}`);
     L.push(`  link ${health(p.conn)} · voice ${health(p.voice)}${p.localMuted ? ' (muted by me)' : ''}${p.muted ? ' · their mic is off' : ''}`);
-    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + ` · ${p.screenMode || 'game'} mode`);
+    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn, p).replace(/\n/g, ' · ') + (p.audioDelay ? ` · their sound waits ${Math.round(p.audioDelay)} ms, played ${audioLead(p)} ms sooner` : ''));
     else if (p.sharing) L.push(`  their screen: ${p.hidden ? 'closed by me' : 'not received'}`);
     if (p.screenOut) {
       const s = await callStats(p.screenOut, 'out');
-      L.push('  my screen to them: ' + describeOut('', s, p, false, trEn).replace(/^: /, '') + (s && s.impl ? ` · ${coder(s, 'encoding', trEn)}` : ''));
+      L.push('  my screen to them: ' + describeOut('', s, p, false, trEn).replace(/^: /, '') + (s && s.impl ? ` · ${coder(s, 'encoding', trEn)}` : '') + (s && s.sndKbps != null ? ` · sound ${s.sndKbps} kbps` : ''));
     }
   }
   if (diagLog.length) {
