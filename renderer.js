@@ -147,7 +147,8 @@ const state = {
   joinedAt: 0,          // when I joined (decides who re-picks on a colour clash)
   boot: Math.random().toString(36).slice(2, 10), // new on every start: friends can tell I restarted
   resume: null,         // after a crash: who I was in the room, to slip back in as the same player
-  quietUntil: 0         // no "joined" toasts until then (friends reconnecting after my restart)
+  quietUntil: 0,        // no "joined" toasts until then (friends reconnecting after my restart)
+  cinema: null          // cinema mode: the id of the friend's screen that fills the window
 };
 
 const roomId = () => (state.code ? ROOM_PREFIX + state.code : '');
@@ -2306,6 +2307,13 @@ function addTile(id, stream, isMe) {
   stats.setAttribute('aria-pressed', String(!!prefs.stats));
   stats.addEventListener('click', () => setStats(!prefs.stats));
   tools.appendChild(stats);
+  // Cinema mode, on friends' screens: this screen fills the window, the rest hides.
+  let cine = null;
+  if (!isMe) {
+    cine = el('button', 'tile-btn cinema-btn');
+    cine.addEventListener('click', () => toggleCinema(id));
+    tools.appendChild(cine);
+  }
   const full = el('button', 'tile-btn icon full-btn');
   full.addEventListener('click', () => toggleFullscreen(tile));
   tools.appendChild(full);
@@ -2340,6 +2348,12 @@ function addTile(id, stream, isMe) {
       sync();
     }
     if (stop) stop.textContent = tr('Stop');
+    if (cine) {
+      const on = state.cinema === id;
+      cine.textContent = tr('Cinema');
+      cine.setAttribute('aria-pressed', String(on));
+      cine.title = on ? tr('Leave cinema mode (Esc or Ctrl+Shift+C)') : tr('Cinema mode: only this screen, as big as the window (Ctrl+Shift+C)');
+    }
     stats.textContent = tr('Stats');
     stats.title = isMe ? tr('Show what each friend is getting from you') : tr('Show stream numbers: resolution, frame rate, bitrate, delay');
     const fullOn = document.fullscreenElement === tile;
@@ -2350,7 +2364,7 @@ function addTile(id, stream, isMe) {
     if (stallText) stallText.textContent = tr('Reconnecting…');
   };
   relabel();
-  tile.addEventListener('click', () => { if (!document.fullscreenElement) toggleFocus(id); });
+  tile.addEventListener('click', () => { if (!document.fullscreenElement && !state.cinema) toggleFocus(id); });
   tile.addEventListener('dblclick', () => toggleFullscreen(tile));
   // In full screen, controls and cursor hide after a moment without movement.
   // call: the screen call this picture comes from (a newer one = this one is stale).
@@ -2358,6 +2372,7 @@ function addTile(id, stream, isMe) {
   tile.addEventListener('mousemove', () => wake(entry));
 
   if (prevStyle) tile.setAttribute('style', prevStyle);
+  if (state.cinema === id) tile.classList.add('cinema-tile'); // rebuilt (a track was added): still in cinema mode
   if (isSpeaking(isMe ? 'me' : id)) tile.classList.add('speaking');
   // Friends' screens first in the page, mine last.
   const mine = tiles.get('me');
@@ -2371,10 +2386,50 @@ function addTile(id, stream, isMe) {
 }
 
 function wake(entry) {
-  if (document.fullscreenElement !== entry.tile) return;
+  if (document.fullscreenElement !== entry.tile && !entry.tile.classList.contains('cinema-tile')) return;
   entry.tile.classList.add('awake');
   clearTimeout(entry.idle);
   entry.idle = setTimeout(() => entry.tile.classList.remove('awake'), 2500);
+}
+
+/* Cinema mode (Ctrl+Shift+C, or the Cinema button on a friend's screen): that
+ * screen fills the GameShare window and everything else hides (the panel,
+ * other screens, and after a moment the controls and the pointer). Voices
+ * keep working. It also asks the sharer for the full picture whatever the
+ * window's size, so small text and subtitles get every pixel there is.
+ * Esc leaves. Full screen still works on top of it. */
+function cinemaPick() {
+  const stage = $('#stage');
+  const friends = [...tiles.keys()].filter((id) => id !== 'me');
+  if (!friends.length) return null;
+  if (friends.includes(stage.dataset.focus)) return stage.dataset.focus; // the one I made big
+  return friends.find((id) => isVideo(state.peers.get(id) || {})) || friends[0];
+}
+
+function setCinema(id) {
+  const next = id && tiles.has(id) && id !== 'me' ? id : null;
+  if (next === state.cinema) return;
+  const prev = tiles.get(state.cinema);
+  if (prev) { prev.tile.classList.remove('cinema-tile', 'awake'); clearTimeout(prev.idle); }
+  state.cinema = next;
+  document.body.classList.toggle('cinema', !!next);
+  const t = tiles.get(next);
+  if (t) { t.tile.classList.add('cinema-tile'); wake(t); }
+  for (const x of tiles.values()) x.relabel();
+  reportViews(); // cinema wants the full resolution
+  layoutStage();
+}
+
+function toggleCinema(id) {
+  if (state.cinema && (!id || id === state.cinema)) { setCinema(null); return; }
+  const pick = id || cinemaPick();
+  if (!pick) { toast(tr('Cinema mode needs a friend’s screen to watch.')); return; }
+  setCinema(pick);
+  if (!prefs.cinemaTip) {
+    prefs.cinemaTip = true;
+    savePrefs();
+    toast(tr('Cinema mode. Press Esc or Ctrl+Shift+C to leave.'));
+  }
 }
 
 function toggleFullscreen(tile) {
@@ -2457,6 +2512,7 @@ function removeTile(id, { keepLayout = false } = {}) {
     tiles.delete(id);
   }
   if (!keepLayout) {
+    if (state.cinema === id) setCinema(null); // the screen I was watching is gone
     if ($('#stage').dataset.focus === id) delete $('#stage').dataset.focus;
     layoutStage();
   }
@@ -2603,6 +2659,7 @@ function wantedView(id) {
   const t = tiles.get(id);
   if (!t) return null;
   if (!state.windowVisible) return { h: 0, paused: true };
+  if (state.cinema === id) return { h: VIEW_STEPS[VIEW_STEPS.length - 1], paused: false }; // every pixel there is
   const px = t.tile.clientHeight * (window.devicePixelRatio || 1);
   const h = VIEW_STEPS.find((s) => s >= px * 0.9) || VIEW_STEPS[VIEW_STEPS.length - 1];
   return { h, paused: false };
@@ -4037,9 +4094,11 @@ function init() {
   document.addEventListener('keydown', (e) => {
     const pickerOpen = !$('#picker').classList.contains('hidden');
     if (e.key === 'Escape') {
+      const busy = pickerOpen || !$('#settingsMenu').classList.contains('hidden');
       if (pickerOpen) closePicker(null);
       closeSettings();
       closePersonMenu();
+      if (state.cinema && !busy && !document.fullscreenElement) setCinema(null);
     }
     if (e.key === 'Enter' && pickerOpen && pickerSelected && !e.repeat) { e.preventDefault(); goPicker(); }
     const inRoom = document.body.dataset.view === 'room';
@@ -4049,6 +4108,7 @@ function init() {
     if (k === 'm' && !state.globalKeys.includes('mute')) { e.preventDefault(); toggleMute(); }
     if (k === 'd' && !state.globalKeys.includes('deafen')) { e.preventDefault(); toggleDeafen(); }
     if (k === 'p') { e.preventDefault(); setPeoplePanel($('#room').classList.contains('collapsed')); }
+    if (k === 'c') { e.preventDefault(); toggleCinema(); }
   });
 
   // Closing the window while in a room: the main process waits a moment so

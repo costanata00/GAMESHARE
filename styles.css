@@ -541,14 +541,28 @@ input[type="range"]:hover::-webkit-slider-thumb, input[type="range"]:active::-we
   .tile-close { top: 5px; right: 5px; width: 24px; height: 24px; }
 }
 
-.tile:fullscreen:not(.awake) { cursor: none; }
+.tile:fullscreen:not(.awake), .tile.cinema-tile:not(.awake) { cursor: none; }
 .tile:fullscreen:not(.awake) .tile-bar,
 .tile:fullscreen:not(.awake) .tile-close,
-.tile:fullscreen:not(.awake) .tile-chip { opacity: 0 !important; }
-.tile:fullscreen.awake .tile-bar, .tile:fullscreen.awake .tile-close { opacity: 1; }
-.tile:fullscreen .tile-chip { font-size: 14px; padding: 7px 16px 8px 15px; }
-.tile:fullscreen .tile-close { top: 14px; right: 14px; }
-.tile:fullscreen .tile-bar { padding: 40px 18px 16px; }
+.tile:fullscreen:not(.awake) .tile-chip,
+.tile.cinema-tile:not(.awake) .tile-bar,
+.tile.cinema-tile:not(.awake) .tile-close,
+.tile.cinema-tile:not(.awake) .tile-chip { opacity: 0 !important; }
+.tile:fullscreen.awake .tile-bar, .tile:fullscreen.awake .tile-close,
+.tile.cinema-tile.awake .tile-bar, .tile.cinema-tile.awake .tile-close { opacity: 1; }
+.tile:fullscreen .tile-chip, .tile.cinema-tile .tile-chip { font-size: 14px; padding: 7px 16px 8px 15px; }
+.tile:fullscreen .tile-close, .tile.cinema-tile .tile-close { top: 14px; right: 14px; }
+.tile:fullscreen .tile-bar, .tile.cinema-tile .tile-bar { padding: 40px 18px 16px; }
+
+/* Cinema mode: one friend's screen fills the window, on top of everything
+   but toasts. (The stage keeps laying tiles out underneath; these win over
+   the positions it sets.) */
+.tile.cinema-tile {
+  position: fixed !important; left: 0 !important; top: 0 !important;
+  width: 100vw !important; height: 100vh !important;
+  z-index: 50; border-radius: 0; box-shadow: none !important; transition: none;
+}
+.tile-btn.cinema-btn[aria-pressed="true"] { background: var(--pc); color: var(--ink-on-color); }
 
 /* ---------- picker ---------- */
 .modal { position: fixed; inset: 0; background: rgba(6,7,9,.8); display: grid; place-items: center; z-index: 50; animation: fade .12s ease-out; }
