@@ -154,6 +154,11 @@ const PT = {
   'Filters out keyboard, fans and game sound picked up by your mic':
     'Filtra teclado, ventoinhas e som do jogo captados pelo seu microfone',
   'Headphones mode': 'Modo fone de ouvido',
+  'Lower streams while friends talk': 'Abaixar os streams quando alguém fala',
+  'Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.':
+    'Abaixa um pouco o som das telas compartilhadas enquanto alguém fala, para você ouvir a pessoa por cima do filme.',
+  'Stream volume while friends talk': 'Volume do stream enquanto alguém fala',
+  'Streams play at {n}% of their volume while a friend talks': 'Os streams tocam a {n}% do volume enquanto um amigo fala',
   'Clearer voice with echo cancellation off. Only with headphones.':
     'Voz mais limpa, com o cancelamento de eco desligado. Só com fone de ouvido.',
   'How many players can be in this room': 'Quantos jogadores cabem nesta sala',
