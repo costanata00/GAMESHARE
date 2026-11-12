@@ -172,9 +172,13 @@ const PT = {
     'O máximo que cada amigo recebe de você. Mais alta deixa jogos rápidos mais nítidos, mas usa mais upload. Abaixe se travar para os amigos.',
   'Automatic ({n} Mbps)': 'Automática ({n} Mbps)',
   'Bitrate updated': 'Taxa de bits atualizada',
-  'Movie mode': 'Modo filme',
-  'Steadier picture for movies and videos. Friends see your screen about 1.5 s late, so not for games.':
-    'Imagem mais estável para filmes e vídeos. Seus amigos veem sua tela cerca de 1,5 s atrasada, então não é para jogos.',
+  'Sharing mode': 'Modo de compartilhamento',
+  'Game': 'Jogo',
+  'Video': 'Vídeo',
+  'For playing: the lowest delay.': 'Para jogar: o menor atraso.',
+  'For films and videos: steady picture, richer sound. Friends see it about 1 s late.':
+    'Para filmes e vídeos: imagem estável e som melhor. Os amigos veem com cerca de 1 s de atraso.',
+  'Watching a video? Use Video mode': 'Vai assistir a um vídeo? Use o modo Vídeo',
   'App': 'Aplicativo',
   'In-game overlay': 'Overlay no jogo',
   'Shows who’s talking on top of your game. Works with borderless and windowed games.':
@@ -204,9 +208,6 @@ const PT = {
   'Overlay on: it shows who’s talking while you’re in another window, like your game.':
     'Overlay ligado: mostra quem está falando enquanto você está em outra janela, como o seu jogo.',
   'Quality updated': 'Qualidade atualizada',
-  'Movie mode on: friends see your screen about 1.5 s late':
-    'Modo filme ligado: seus amigos veem sua tela cerca de 1,5 s atrasada',
-  'Movie mode off': 'Modo filme desligado',
 
   // ---- microphone
   'Your chosen microphone isn’t connected. Using the system default.':
@@ -271,8 +272,8 @@ const PT = {
   'held back by your CPU': 'limitado pelo seu processador',
   'held back by the connection': 'limitado pela conexão',
   'held back by {why}': 'limitado por {why}',
-  'movie': 'filme',
-  'movie mode': 'modo filme',
+  'video': 'vídeo',
+  'Video mode': 'Modo Vídeo',
   'Nobody is watching yet': 'Ninguém está assistindo ainda',
 
   // ---- share picker
