@@ -241,6 +241,11 @@ const PT = {
   'Show stream numbers: resolution, frame rate, bitrate, delay':
     'Mostrar os dados da transmissão: resolução, fps, taxa de bits e atraso',
   'Full screen': 'Tela cheia',
+  'Cinema': 'Cinema',
+  'Cinema mode: only this screen, as big as the window (Ctrl+Shift+C)': 'Modo cinema: só esta tela, do tamanho da janela (Ctrl+Shift+C)',
+  'Leave cinema mode (Esc or Ctrl+Shift+C)': 'Sair do modo cinema (Esc ou Ctrl+Shift+C)',
+  'Cinema mode needs a friend’s screen to watch.': 'O modo cinema precisa da tela de um amigo para assistir.',
+  'Cinema mode. Press Esc or Ctrl+Shift+C to leave.': 'Modo cinema. Aperte Esc ou Ctrl+Shift+C para sair.',
   'Exit full screen': 'Sair da tela cheia',
   'Couldn’t go full screen.': 'Não foi possível ir para a tela cheia.',
   'Hide my preview (keeps sharing)': 'Esconder minha prévia (continua compartilhando)',
