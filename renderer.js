@@ -444,16 +444,27 @@ function videoBitrates(sdp, startKbps, minKbps) {
   return lines.join('\r\n');
 }
 
-function screenSdp(sdp) {
-  sdp = preferCodecs(sdp, 'video', (name) => name === 'h264');
-  sdp = videoBitrates(sdp, SCREEN_START_KBPS, SCREEN_MIN_KBPS);
-  // Shared app sound is stereo music/game audio, not voice: give it room.
-  const m = sdp.match(/a=rtpmap:(\d+) opus\/48000/);
-  if (m) {
-    sdp = sdp.replace(new RegExp(`a=fmtp:${m[1]} ([^\\r\\n]*)`), (line, params) =>
-      /stereo=/.test(params) ? line : `a=fmtp:${m[1]} ${params};stereo=1;sprop-stereo=1;maxaveragebitrate=128000`);
-  }
-  return sdp;
+// The stream's sound is stereo music / film / game audio, not voice: Opus in
+// stereo with room to breathe (more in Video mode, where it's the soundtrack),
+// and never skipping "silence" (DTX), which would chop quiet passages. This
+// track doesn't come from a microphone, so it gets no echo cancellation,
+// automatic gain or noise suppression either: those are only on the mic.
+const STREAM_AUDIO_BPS = { game: 128_000, video: 192_000 };
+// mode: of the share this call carries. Both sides put the same numbers in
+// their half of the call setup; the sharer's encoder is also told directly
+// (see tuneSenders).
+function screenSdp(mode) {
+  const want = { stereo: 1, 'sprop-stereo': 1, maxaveragebitrate: STREAM_AUDIO_BPS[mode] || STREAM_AUDIO_BPS.game, usedtx: 0 };
+  return (sdp) => {
+    sdp = preferCodecs(sdp, 'video', (name) => name === 'h264');
+    sdp = videoBitrates(sdp, SCREEN_START_KBPS, SCREEN_MIN_KBPS);
+    const m = sdp.match(/a=rtpmap:(\d+) opus\/48000/);
+    if (!m) return sdp;
+    return sdp.replace(new RegExp(`a=fmtp:${m[1]} ([^\\r\\n]*)`), (line, params) => {
+      const kept = params.split(';').filter((kv) => kv && !(kv.split('=')[0].trim() in want));
+      return `a=fmtp:${m[1]} ${kept.concat(Object.entries(want).map(([k, v]) => `${k}=${v}`)).join(';')}`;
+    });
+  };
 }
 
 /* ------------------------------------------------------------ shared app sound */
@@ -1496,7 +1507,7 @@ function onIncomingCall(call) {
     p.screenIn = call;
     p.sharing = true; // a screen arriving means they're sharing (their hello may still be on its way)
     p.sentView = null; // tell this sharer our size again for the new share
-    call.answer(undefined, { sdpTransform: screenSdp }); // receive only
+    call.answer(undefined, { sdpTransform: screenSdp(modeOf(call.metadata)) }); // receive only
     const snd = call.metadata && call.metadata.sound;
     p.screenSound = snd && typeof snd === 'object'
       ? { sound: String(snd.sound || 'none'), app: snd.app ? String(snd.app).slice(0, 60) : null }
@@ -1545,7 +1556,7 @@ function watchIce(call) {
 function sendScreenTo(p) {
   if (!state.screen || !state.peer || state.peer.disconnected) return;
   if (p.screenOut) { const old = p.screenOut; p.screenOut = null; try { old.close(); } catch { /* ignore */ } }
-  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, mode: state.mode, movie: state.mode === 'video' }, sdpTransform: screenSdp });
+  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, mode: state.mode, movie: state.mode === 'video' }, sdpTransform: screenSdp(state.mode) });
   if (!call) return;
   call.gsAt = performance.now();
   p.screenOut = call;
@@ -1595,6 +1606,15 @@ async function tuneSenders(pc, p) {
     enc.priority = 'low';
     enc.networkPriority = 'low';
     try { await sender.setParameters(params); } catch (e) { console.warn('setParameters', e); if (p) p.encSig = null; }
+  }
+  // The stream's sound: the mode's bitrate.
+  for (const sender of pc.getSenders()) {
+    if (!sender.track || sender.track.kind !== 'audio') continue;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) continue;
+    if (params.encodings[0].maxBitrate === STREAM_AUDIO_BPS[state.mode]) continue;
+    params.encodings[0].maxBitrate = STREAM_AUDIO_BPS[state.mode];
+    try { await sender.setParameters(params); } catch (e) { console.warn('stream sound params', e); }
   }
 }
 
