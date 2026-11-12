@@ -19,7 +19,7 @@ const ofs = require('original-fs'); // plain fs: treats .asar files as files
 
 // Ed25519 public key (base64, SPKI DER) that update packages must be signed
 // with. Set by `npm run update:keygen`. Empty = updates switched off.
-const UPDATE_PUBLIC_KEY = '';
+const UPDATE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA/vsMZXmNR0zumL3sUgCZGoB57eRpDPtXLXftaPIAx1k=';
 
 // Bump when the contract between this loader and the app code changes
 // (what's in global.gsBoot). Updates built for a newer loader need a reinstall.
