@@ -1,7 +1,7 @@
 {
   "name": "gameshare",
   "productName": "GameShare",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Voice chat and game screen sharing for up to 10 players. Peer-to-peer, no server to run.",
   "main": "boot.js",
   "author": "GameShare",
