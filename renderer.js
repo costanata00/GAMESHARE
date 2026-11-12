@@ -167,6 +167,27 @@ function toast(msg, kind = '') {
   setTimeout(() => t.remove(), 4100);
 }
 
+// A notice that stays until it's closed (one per key), for things worth
+// reading properly. Shown where the toasts are.
+const notices = new Map();
+function showNotice(key, title, text) {
+  closeNotice(key);
+  const n = el('div', 'toast notice warn');
+  n.setAttribute('role', 'alert');
+  const x = el('button', 'notice-close', '✕');
+  x.title = tr('Close');
+  x.setAttribute('aria-label', x.title);
+  x.addEventListener('click', () => closeNotice(key));
+  n.append(el('b', null, title), el('p', null, text), x);
+  $('#toasts').appendChild(n);
+  notices.set(key, n);
+}
+function closeNotice(key) {
+  const n = notices.get(key);
+  if (n) n.remove();
+  notices.delete(key);
+}
+
 function initials(name) {
   return (name || '?').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '?';
 }
@@ -815,7 +836,7 @@ function noteSharing(p, sharing) {
     cue('share');
     attention();
   }
-  if (!sharing) p.announced = false;
+  if (!sharing) { p.announced = false; p.audioDelay = null; }
   p.sharing = sharing;
 }
 
@@ -1343,6 +1364,15 @@ function onMessage(conn, msg) {
       retuneAll();
       break;
     }
+    // About the screen they're sharing with me: how long its sound waits on
+    // their side before it's sent (see applyScreenBuffer).
+    case 'share-info': {
+      const d = Number(msg.audioDelay);
+      const before = audioLead(p);
+      p.audioDelay = Number.isFinite(d) && d > 0 ? Math.min(500, d) : null;
+      if (audioLead(p) !== before) applyScreenBuffer(p);
+      break;
+    }
     // This friend now holds the room ID for newcomers.
     case 'doorman': {
       state.doormanOwner = p.id;
@@ -1414,13 +1444,24 @@ function wireDoorman(d) {
 
 /* ------------------------------------------------------------ calls */
 
+// Lip sync in Video mode. WebRTC lines sound and picture up by when each was
+// captured, but the shared app's sound reaches the sharer's GameShare a little
+// after the picture does (it waits in a small buffer, see
+// app-audio-worklet.js), so it would play that much late. The sharer says how
+// long that wait is ('share-info'), and the viewer plays the sound that much
+// sooner. Up to SYNC_LEAD_MAX only: WebRTC leaves differences under 30 ms
+// alone and would undo anything bigger.
+const SYNC_LEAD_MAX = 25;
+const audioLead = (p) => (isVideo(p) && p.audioDelay > 0 ? Math.min(SYNC_LEAD_MAX, Math.round(p.audioDelay / 5) * 5) : 0);
+
 // Video and the stream's sound share one target so they stay in sync.
 function applyScreenBuffer(p) {
   const pc = p.screenIn && p.screenIn.peerConnection;
   if (!pc) return;
+  const target = p.screenBuffer || bufferBase(p);
   for (const r of pc.getReceivers()) {
     if (r.track && 'jitterBufferTarget' in r) {
-      try { r.jitterBufferTarget = p.screenBuffer || bufferBase(p); } catch { /* ignore */ }
+      try { r.jitterBufferTarget = r.track.kind === 'audio' ? Math.max(0, target - audioLead(p)) : target; } catch { /* ignore */ }
     }
   }
 }
@@ -1582,6 +1623,7 @@ function sendScreenTo(p) {
   if (!call) return;
   call.gsAt = performance.now();
   p.screenOut = call;
+  p.infoSig = null; // tell this viewer about the share again (see watchShare)
   const pc = call.peerConnection;
   if (pc) {
     pc.addEventListener('connectionstatechange', () => { if (pc.connectionState === 'connected') retuneAll(); });
@@ -1609,7 +1651,12 @@ async function tuneSenders(pc, p) {
     active,
     scale: Math.round(scale * 100) / 100,
     bitrate: Math.round(Math.max(MIN_VIEWER_BITRATE, Math.min(rate / Math.pow(scale, 1.5), slice))),
-    fps: q.fps
+    fps: q.fps,
+    // Busy PC or connection: keep the frame rate and let the picture soften.
+    // Except in Video mode while the picture stands still (a paused film, a
+    // menu): then sharpness is all that matters, so small text and subtitles
+    // stay readable (see watchShare).
+    pref: share.still ? 'maintain-resolution' : 'maintain-framerate'
   };
   const sig = JSON.stringify(want);
   if (p) p.encWant = want;
@@ -1619,7 +1666,7 @@ async function tuneSenders(pc, p) {
     if (!sender.track || sender.track.kind !== 'video') continue;
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.degradationPreference = 'maintain-framerate';
+    params.degradationPreference = want.pref;
     const enc = params.encodings[0];
     enc.active = want.active;
     enc.scaleResolutionDownBy = want.scale;
@@ -1688,7 +1735,7 @@ function stuckStep(w, s, now) {
 }
 
 // Drop a stuck shrink in place: a moment of "keep the resolution", then back.
-async function nudgeEncoder(pc) {
+async function nudgeEncoder(pc, p) {
   const set = async (pref) => {
     for (const sender of pc.getSenders()) {
       if (!sender.track || sender.track.kind !== 'video') continue;
@@ -1700,7 +1747,124 @@ async function nudgeEncoder(pc) {
   };
   await set('maintain-resolution');
   await new Promise((r) => setTimeout(r, 1500));
-  if (pc.connectionState === 'connected') await set('maintain-framerate');
+  if (pc.connectionState === 'connected') await set((p && p.encWant && p.encWant.pref) || 'maintain-framerate');
+}
+
+/* Watching my own share (every few seconds, while sharing):
+ *  - how many frames a second the capture delivers (for Stats). Nothing is
+ *    added on top: the encoder gets the capture's frames, up to the quality
+ *    preset's frame rate, and a frame that repeats the last one costs next
+ *    to nothing;
+ *  - in Video mode, whether the picture stands still (a paused film): the
+ *    encoder then needs almost no bitrate, which is how it's noticed. While
+ *    it does, the encoder is told to keep the picture sharp instead of the
+ *    frame rate (see tuneSenders), and back once it moves again;
+ *  - a browser window that stays black while its sound plays: a streaming
+ *    site's copy protection, most likely. Say so once (see checkBlackShare);
+ *  - how long the app's sound waits before it's sent, for the viewers' lip
+ *    sync (see applyScreenBuffer). */
+const share = { srcFps: null, lastSrc: null, still: false, probe: null, canvas: null, blackFor: 0, blackAt: 0, hinted: false, loudAt: 0 };
+const STILL_BELOW_KBPS = 150, MOVING_ABOVE_KBPS = 400;
+
+function resetShareWatch() {
+  if (share.probe) { share.probe.srcObject = null; share.probe = null; }
+  Object.assign(share, { srcFps: null, lastSrc: null, still: false, blackFor: 0, blackAt: 0, hinted: false, loudAt: 0 });
+  closeNotice('drm');
+}
+
+async function watchShare() {
+  if (!state.screen) return;
+  const stream = state.screen;
+  // One viewer's connection is enough: they all get the same capture.
+  let src = null;
+  for (const p of state.peers.values()) {
+    const call = p.screenOut;
+    const pc = call && call.peerConnection;
+    if (!pc || pc.connectionState !== 'connected' || (p.encWant && !p.encWant.active)) continue;
+    let frames = null, out = null;
+    try {
+      (await pc.getStats()).forEach((r) => {
+        if (r.type === 'media-source' && r.kind === 'video') frames = r.frames || 0;
+        if (r.type === 'outbound-rtp' && r.kind === 'video') out = r;
+      });
+    } catch { /* ignore */ }
+    if (frames != null && out) { src = { call, frames, bytes: out.bytesSent || 0, t: out.timestamp, held: out.qualityLimitationReason === 'bandwidth' }; break; }
+  }
+  if (state.screen !== stream) return;
+  const last = share.lastSrc;
+  share.lastSrc = src;
+  const dt = src && last && last.call === src.call ? src.t - last.t : 0;
+  share.srcFps = dt > 1000 && src.frames >= last.frames ? ((src.frames - last.frames) * 1000) / dt : null;
+  const kbps = dt > 1000 && src.bytes >= last.bytes ? ((src.bytes - last.bytes) * 8) / dt : null;
+  if (state.mode === 'video' && kbps != null) {
+    // (a starved connection also sends little: that's not a paused film)
+    const still = share.still ? kbps < MOVING_ABOVE_KBPS : kbps < STILL_BELOW_KBPS && !src.held;
+    if (still !== share.still) { share.still = still; retuneAll(); }
+  } else if (kbps == null && share.still) { share.still = false; retuneAll(); }
+  checkBlackShare();
+  // Tell each viewer how long the sound waits here (when it changed by 5 ms or more).
+  const st = appAudio.stat;
+  const fresh = st && st.delayMs != null && performance.now() - st.at < 5000;
+  if (st && st.peak > 0.003) share.loudAt = performance.now();
+  const audioDelay = fresh && stream.getAudioTracks().length ? Math.round(st.delayMs / 5) * 5 : null;
+  // (only once their screen call is up: the message travels faster than the call)
+  for (const p of state.peers.values()) {
+    const pc = p.screenOut && p.screenOut.peerConnection;
+    if (!pc || pc.connectionState !== 'connected' || p.lost) continue;
+    const sig = String(audioDelay);
+    if (p.infoSig === sig) continue;
+    p.infoSig = sig;
+    send(p, { type: 'share-info', audioDelay });
+  }
+}
+
+// A copy-protected video (Netflix, Prime Video, Disney+…) reaches screen
+// capture as plain black. GameShare doesn't get around that; it only tells
+// the sharer what's going on and which browser setting usually helps.
+// Black = at least 80% of the picture pure black (the browser's own bars may
+// still show), for a few checks in a row, in a browser window, while its
+// sound is playing (when the sound is shared at all).
+function isBrowserShare() {
+  const app = (state.screenSound && state.screenSound.app) || '';
+  return BROWSER_RE.test(state.shareName || '') || /^(chrome|msedge|firefox|opera|brave|vivaldi|chromium)(\.exe)?$/i.test(app);
+}
+
+function blackFraction(video) {
+  if (!video || !video.videoWidth) return null;
+  if (!share.canvas) { share.canvas = document.createElement('canvas'); share.canvas.width = 48; share.canvas.height = 27; }
+  const g = share.canvas.getContext('2d', { willReadFrequently: true });
+  try { g.drawImage(video, 0, 0, 48, 27); } catch { return null; }
+  const d = g.getImageData(0, 0, 48, 27).data;
+  let black = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] <= 3 && d[i + 1] <= 3 && d[i + 2] <= 3) black++;
+  return black / (d.length / 4);
+}
+
+function checkBlackShare() {
+  if (share.hinted || !state.screen || !isBrowserShare()) return;
+  // My preview shows the capture; if I closed it, a hidden video does.
+  const mine = tiles.get('me');
+  if (!mine && !share.probe) {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.srcObject = new MediaStream(state.screen.getVideoTracks());
+    v.play().catch(() => {});
+    share.probe = v;
+    return; // first picture by the next check
+  }
+  if (mine && share.probe) { share.probe.srcObject = null; share.probe = null; }
+  const f = blackFraction(mine ? mine.video : share.probe);
+  const now = performance.now();
+  const hasSound = state.screen.getAudioTracks().length > 0;
+  const playing = !hasSound || now - share.loudAt < 4000;
+  if (f == null || f < 0.8 || !playing) { share.blackFor = 0; share.blackAt = now; return; }
+  share.blackFor += now - (share.blackAt || now);
+  share.blackAt = now;
+  if (share.blackFor < 5000) return;
+  share.hinted = true;
+  note('my shared browser window is black: showed the protected-video hint');
+  showNotice('drm', tr('Your shared window looks black'),
+    tr('Streaming sites like Netflix, Prime Video and Disney+ protect their video, so a screen capture gets a black picture. What usually brings it back: in that browser’s settings, turn off “Use graphics acceleration when available” (hardware acceleration) and restart the browser. GameShare doesn’t get around the protection: if it stays black, that site can’t be shared.'));
 }
 
 async function checkStuckShares() {
@@ -1736,7 +1900,7 @@ async function checkStuckShares() {
     const why = `stuck at ${out.frameHeight}p (wanted ${wantH}p, using ${Math.round(used * 100)}% of its bitrate, limit: ${out.qualityLimitationReason || '?'}) on a healthy link`;
     if (v === 'nudge') {
       note(`my screen to ${p.name} ${why}: nudging the encoder`);
-      nudgeEncoder(pc);
+      nudgeEncoder(pc, p);
     } else if (v === 'reopen') {
       note(`my screen to ${p.name} ${why} again: reopening it`);
       sendScreenTo(p);
@@ -1746,11 +1910,11 @@ async function checkStuckShares() {
   }
 }
 
-// The most one friend can get from my screen (bits/s) before it's sized to
-// how big they watch it: the bitrate picked in Settings, or the preset's.
 // Video mode for my share (or, while not sharing, the mode the picker remembers).
 const videoShare = () => (state.screen ? state.mode : prefs.shareMode) === 'video';
 const autoBitrate = () => QUALITY[state.quality].bitrate * (videoShare() ? VIDEO_BITRATE_BOOST : 1);
+// The most one friend can get from my screen (bits/s) before it's sized to
+// how big they watch it: the bitrate picked in Settings, or the preset's.
 function shareBitrate() {
   const kbps = Number(prefs.bitrate);
   if (BITRATES.includes(kbps)) return kbps * 1000;
@@ -1838,6 +2002,7 @@ function stopShare() {
   state.screen.getTracks().forEach((t) => t.stop());
   state.screen = null;
   state.mode = 'game';
+  resetShareWatch();
   updateBitrateUi();
   state.previewHidden = false;
   for (const p of state.peers.values()) {
@@ -2980,6 +3145,7 @@ async function pollNet() {
   }
   await adaptScreenBuffers();
   await checkStuckShares();
+  await watchShare();
   if (document.body.dataset.view === 'room') renderPeople();
 }
 

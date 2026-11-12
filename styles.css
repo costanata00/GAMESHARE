@@ -608,6 +608,11 @@ body:has(#room.collapsed:not(.hidden)) .toasts { left: calc(var(--rail-w) + (100
 .toast.warn { box-shadow: 0 0 0 1px rgba(255,181,71,.5), 0 10px 30px rgba(0,0,0,.4); }
 .toast.err { box-shadow: 0 0 0 1px rgba(255,77,94,.55), 0 10px 30px rgba(0,0,0,.4); }
 .toast.out { opacity: 0; transform: translateY(-6px); }
+.toast.notice { pointer-events: auto; max-width: 460px; text-align: left; padding: 13px 40px 13px 16px; position: relative; line-height: 1.45; white-space: normal; }
+.toast.notice b { display: block; margin-bottom: 3px; }
+.toast.notice p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.notice-close { position: absolute; top: 8px; right: 8px; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 6px; }
+.notice-close:hover { color: var(--text); background: rgba(255,255,255,.06); }
 @keyframes tin { from { opacity: 0; transform: translateY(-6px); } }
 
 /* ---------- small windows ---------- */
