@@ -3,7 +3,7 @@
   "productName": "GameShare",
   "version": "1.5.0",
   "description": "Voice chat and game screen sharing for up to 10 players. Peer-to-peer, no server to run.",
-  "main": "main.js",
+  "main": "boot.js",
   "author": "GameShare",
   "license": "MIT",
   "scripts": {
@@ -12,20 +12,25 @@
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
-    "build:audio": "x86_64-w64-mingw32-g++ -O2 -static -municode -o bin/win32-x64/GameShareAudio.exe native/app-audio.cpp -lole32"
+    "build:audio": "x86_64-w64-mingw32-g++ -O2 -static -municode -o bin/win32-x64/GameShareAudio.exe native/app-audio.cpp -lole32",
+    "update:keygen": "node scripts/update-keygen.js",
+    "update:pack": "node scripts/update-pack.js"
   },
   "dependencies": {
     "peerjs": "^1.5.5"
   },
   "devDependencies": {
     "electron": "^44.8.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "@electron/asar": "^3.4.1"
   },
   "build": {
     "appId": "app.gameshare.desktop",
     "productName": "GameShare",
     "files": [
+      "boot.js",
       "main.js",
+      "updater.js",
       "preload.js",
       "index.html",
       "i18n.js",
