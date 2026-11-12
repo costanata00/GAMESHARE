@@ -154,6 +154,27 @@ const PT = {
   'Filters out keyboard, fans and game sound picked up by your mic':
     'Filtra teclado, ventoinhas e som do jogo captados pelo seu microfone',
   'Headphones mode': 'Modo fone de ouvido',
+  // ---- soundboard
+  'Sounds': 'Sons',
+  'Sound': 'Som',
+  'Soundboard': 'Soundboard',
+  'Soundboard: play a sound to everyone in the room': 'Soundboard: toque um som para todos na sala',
+  'Click a sound and everyone in the room hears it, even while you’re muted. Click it again to stop.':
+    'Clique em um som e todos na sala ouvem, mesmo com você silenciado. Clique de novo para parar.',
+  'Add sounds…': 'Adicionar sons…',
+  'Soundboard volume': 'Volume da soundboard',
+  'No sounds yet. Add audio files (MP3, WAV, OGG…) and they stay saved on this computer.':
+    'Nenhum som ainda. Adicione arquivos de áudio (MP3, WAV, OGG…) e eles ficam salvos neste computador.',
+  'Remove “{name}”': 'Remover “{name}”',
+  '“{name}” removed': '“{name}” removido',
+  'Couldn’t read “{name}” as audio.': 'Não deu para ler “{name}” como áudio.',
+  '“{name}” is too big (over {n} MB).': '“{name}” é grande demais (mais de {n} MB).',
+  '“{name}” is too long (over {n} s).': '“{name}” é longo demais (mais de {n} s).',
+  'The soundboard is full ({n} sounds). Remove one first.': 'A soundboard está cheia ({n} sons). Remova um antes.',
+  'Couldn’t save the sound on this computer.': 'Não deu para salvar o som neste computador.',
+  'Couldn’t play that sound.': 'Não deu para tocar esse som.',
+  '{n} sound added': '{n} som adicionado',
+  '{n} sounds added': '{n} sons adicionados',
   'Lower streams while friends talk': 'Abaixar os streams quando alguém fala',
   'Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.':
     'Abaixa um pouco o som das telas compartilhadas enquanto alguém fala, para você ouvir a pessoa por cima do filme.',

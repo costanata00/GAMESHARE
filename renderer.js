@@ -95,7 +95,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', duck: false, duckTo: 40, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
+              micId: '', outId: '', duck: false, duckTo: 40, sbVolume: 60, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -111,6 +111,7 @@ const prefs = (() => {
   if (!BITRATES.includes(Number(d.bitrate))) d.bitrate = 'auto';
   d.roomSize = Math.min(MAX_LIMIT, Math.max(MIN_SIZE, Number(d.roomSize) || DEFAULT_SIZE));
   d.duckTo = Math.min(80, Math.max(10, Number(d.duckTo) || 40));
+  d.sbVolume = Math.min(100, Math.max(5, Number(d.sbVolume) || 60));
   return d;
 })();
 function savePrefs() {
@@ -637,6 +638,207 @@ function toggleDeafen() {
   pushOverlay();
 }
 
+/* ------------------------------------------------------------ soundboard
+ * Short sounds you add yourself (any audio file Chromium can read). They are
+ * kept on this computer, in the app's own storage (IndexedDB), so they are
+ * still there the next time GameShare opens. Nothing is uploaded: a sound
+ * only leaves this PC as audio, while it plays.
+ *
+ * Playing one: you hear it through your speakers, and friends hear it in
+ * your voice. For as long as it plays, what's sent to each friend is your
+ * microphone mixed with the sound, swapped in on the open voice calls
+ * without reconnecting (like changing microphones) and swapped back when it
+ * ends. The rest of the time the voice path is exactly as before. A muted
+ * microphone adds silence to the mix, so sounds work while you're muted.
+ * It goes out as voice (mono, 64 kbps), so friends on any version hear it. */
+const SB_MAX_SOUNDS = 30, SB_MAX_MB = 10, SB_MAX_SECONDS = 60;
+const sb = { db: null, sounds: [], buffers: new Map(), playing: null, loaded: false };
+
+function sbDb() {
+  if (sb.db) return sb.db;
+  sb.db = new Promise((resolve, reject) => {
+    const req = indexedDB.open('gs-soundboard', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('sounds', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  sb.db.catch(() => { sb.db = null; });
+  return sb.db;
+}
+// One request against the sounds store; resolves with its result.
+async function sbStore(mode, fn) {
+  const db = await sbDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('sounds', mode);
+    const req = fn(tx.objectStore('sounds'));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function sbLoad() {
+  if (sb.loaded) return;
+  sb.loaded = true;
+  try {
+    const all = (await sbStore('readonly', (s) => s.getAll())) || [];
+    sb.sounds = all.sort((a, b) => a.added - b.added);
+  } catch (e) { console.warn('soundboard', e); sb.sounds = []; }
+  sbRender();
+}
+
+async function sbBuffer(sound) {
+  let buf = sb.buffers.get(sound.id);
+  if (!buf) {
+    buf = await ctx().decodeAudioData(sound.data.slice(0)); // (decoding empties the buffer it's given)
+    sb.buffers.set(sound.id, buf);
+  }
+  return buf;
+}
+
+async function sbAddFiles(files) {
+  let added = 0;
+  for (const f of files) {
+    const name = f.name.replace(/\.[^.]+$/, '').trim().slice(0, 40) || tr('Sound');
+    if (sb.sounds.length >= SB_MAX_SOUNDS) { toast(tr('The soundboard is full ({n} sounds). Remove one first.', { n: SB_MAX_SOUNDS }), 'warn'); break; }
+    if (f.size > SB_MAX_MB * 1024 * 1024) { toast(tr('“{name}” is too big (over {n} MB).', { name, n: SB_MAX_MB }), 'warn'); continue; }
+    let data, buf;
+    try {
+      data = await f.arrayBuffer();
+      buf = await ctx().decodeAudioData(data.slice(0));
+    } catch { toast(tr('Couldn’t read “{name}” as audio.', { name }), 'warn'); continue; }
+    if (buf.duration > SB_MAX_SECONDS) { toast(tr('“{name}” is too long (over {n} s).', { name, n: SB_MAX_SECONDS }), 'warn'); continue; }
+    const sound = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name, data, added: Date.now() };
+    try { await sbStore('readwrite', (s) => s.put(sound)); } catch (e) {
+      console.warn('soundboard save', e);
+      toast(tr('Couldn’t save the sound on this computer.'), 'err');
+      break;
+    }
+    sb.sounds.push(sound);
+    sb.buffers.set(sound.id, buf);
+    added++;
+  }
+  if (added) toast(tr(added === 1 ? '{n} sound added' : '{n} sounds added', { n: added }), 'ok');
+  sbRender();
+}
+
+async function sbRemove(id) {
+  const sound = sb.sounds.find((s) => s.id === id);
+  if (!sound) return;
+  if (sb.playing && sb.playing.id === id) sbStop();
+  try { await sbStore('readwrite', (s) => s.delete(id)); } catch (e) { console.warn('soundboard delete', e); }
+  sb.sounds = sb.sounds.filter((s) => s.id !== id);
+  sb.buffers.delete(id);
+  toast(tr('“{name}” removed', { name: sound.name }));
+  sbRender();
+}
+
+// What friends get from me on the open voice calls: `track`.
+async function sbSend(track) {
+  if (!track) return;
+  for (const p of state.peers.values()) {
+    const pc = p.voice && p.voice.peerConnection;
+    if (!pc || pc.connectionState === 'closed') continue;
+    for (const sender of pc.getSenders()) {
+      if (sender.track && sender.track.kind === 'audio' && sender.track !== track) {
+        try { await sender.replaceTrack(track); } catch (e) { console.warn('soundboard replaceTrack', e); }
+      }
+    }
+  }
+}
+
+function sbStop() {
+  const p = sb.playing;
+  if (!p) return;
+  sb.playing = null;
+  p.src.onended = null;
+  try { p.src.stop(); } catch { /* ignore */ }
+  // Back to the plain microphone, then take the mixer apart.
+  sbSend(state.mic && state.mic.getAudioTracks()[0]).finally(() => {
+    for (const n of [p.src, p.gain, p.micSrc]) { try { n && n.disconnect(); } catch { /* ignore */ } }
+    p.dest.stream.getTracks().forEach((t) => t.stop());
+  });
+  sbRender();
+}
+
+async function sbPlay(id) {
+  const again = sb.playing && sb.playing.id === id;
+  sbStop();
+  if (again) return; // clicking the sound that's playing stops it
+  const sound = sb.sounds.find((s) => s.id === id);
+  if (!sound || !state.mic || document.body.dataset.view !== 'room') return;
+  let buf;
+  try { buf = await sbBuffer(sound); } catch (e) {
+    console.warn('soundboard decode', e);
+    toast(tr('Couldn’t play that sound.'), 'err');
+    return;
+  }
+  if (sb.playing) return; // another click got here first
+  const c = ctx();
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  const gain = c.createGain();
+  gain.gain.value = clamp(prefs.sbVolume, 5, 100) / 100;
+  const dest = c.createMediaStreamDestination();
+  dest.channelCount = 1;
+  src.connect(gain);
+  gain.connect(c.destination); // for me
+  gain.connect(dest);          // for friends, with my microphone
+  let micSrc = null;
+  if (state.mic.getAudioTracks().length) {
+    try { micSrc = c.createMediaStreamSource(state.mic); micSrc.connect(dest); } catch (e) { console.warn('soundboard mic', e); }
+  }
+  const playing = { id, src, gain, dest, micSrc };
+  sb.playing = playing;
+  sbRender();
+  await sbSend(dest.stream.getAudioTracks()[0]);
+  if (sb.playing !== playing) return; // stopped meanwhile
+  src.onended = () => { if (sb.playing === playing) sbStop(); };
+  src.start();
+}
+
+function sbRender() {
+  const grid = $('#sbGrid');
+  if (!grid) return;
+  grid.replaceChildren();
+  if (!sb.sounds.length) {
+    grid.appendChild(el('p', 'sb-empty', tr('No sounds yet. Add audio files (MP3, WAV, OGG…) and they stay saved on this computer.')));
+  }
+  for (const s of sb.sounds) {
+    const b = el('button', 'sb-sound');
+    b.type = 'button';
+    b.title = s.name;
+    b.classList.toggle('playing', !!sb.playing && sb.playing.id === s.id);
+    b.appendChild(el('span', null, s.name));
+    b.addEventListener('click', () => sbPlay(s.id));
+    const x = el('span', 'sb-del', '✕');
+    x.setAttribute('role', 'button');
+    x.tabIndex = 0;
+    x.title = tr('Remove “{name}”', { name: s.name });
+    x.setAttribute('aria-label', x.title);
+    const del = (e) => { e.stopPropagation(); e.preventDefault(); sbRemove(s.id); };
+    x.addEventListener('click', del);
+    x.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') del(e); });
+    b.appendChild(x);
+    grid.appendChild(b);
+  }
+  const v = $('#sbVolume');
+  v.value = String(prefs.sbVolume);
+  v.style.setProperty('--fill', `${((prefs.sbVolume - 5) / 95) * 100}%`);
+}
+
+function openSounds() {
+  closeSettings();
+  closePersonMenu();
+  sbLoad();
+  sbRender();
+  $('#soundMenu').classList.remove('hidden');
+  $('#sbBtn').setAttribute('aria-expanded', 'true');
+}
+function closeSounds() {
+  $('#soundMenu').classList.add('hidden');
+  $('#sbBtn').setAttribute('aria-expanded', 'false');
+}
+
 /* ------------------------------------------------------------ media setup */
 
 function silentStream() {
@@ -757,6 +959,7 @@ async function swapMic(opts = {}) {
     state.mic = fresh;
     watchLevel('me', fresh);
     refreshDevices();
+    sbStop(); // a soundboard sound was mixed with the old microphone
   })();
   try { await swapping; } finally { swapping = null; }
 }
@@ -3344,6 +3547,7 @@ function setLanguage(pref) {
   refreshDevices();
   renderUpdate();
   if (!$('#picker').classList.contains('hidden')) { renderSources(); renderShareMode(); }
+  sbRender();
   if (prefs.stats) updateStats();
   pushOverlay();
 }
@@ -3604,6 +3808,8 @@ function leave(silent = false) {
   if (prefs.inRoom) { prefs.inRoom = false; savePrefs(); }
   window.gameshare.inRoom(false);
   if (state.screen) stopShare();
+  sbStop();
+  closeSounds();
   if (sayBye) broadcast({ type: 'bye' });
   for (const id of [...state.peers.keys()]) removePeer(id);
   for (const c of dialing.values()) { try { c.close(); } catch { /* ignore */ } }
@@ -3678,6 +3884,7 @@ function applyGlobalKeys() {
 
 function openSettings() {
   closePersonMenu();
+  closeSounds();
   updateSizeControls();
   refreshDevices();
   micMeterOn = true;
@@ -3940,6 +4147,26 @@ function init() {
   });
   $('#settingsMenu').addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', closeSettings);
+
+  // Soundboard
+  $('#sbBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if ($('#soundMenu').classList.contains('hidden')) openSounds(); else closeSounds();
+  });
+  $('#soundMenu').addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', closeSounds);
+  $('#sbAdd').addEventListener('click', () => $('#sbFile').click());
+  $('#sbFile').addEventListener('change', async (e) => {
+    const files = [...e.target.files];
+    e.target.value = ''; // so the same file can be picked again
+    if (files.length) await sbAddFiles(files);
+  });
+  $('#sbVolume').addEventListener('input', (e) => {
+    prefs.sbVolume = clamp(Number(e.target.value) || 60, 5, 100);
+    savePrefs();
+    e.target.style.setProperty('--fill', `${((prefs.sbVolume - 5) / 95) * 100}%`);
+    if (sb.playing) sb.playing.gain.gain.value = prefs.sbVolume / 100;
+  });
   $('#headphonesBtn').addEventListener('click', () => setHeadphones(!state.headphones));
   $('#noiseBtn').addEventListener('click', async () => {
     prefs.noiseRemoval = prefs.noiseRemoval === false;
@@ -4094,9 +4321,10 @@ function init() {
   document.addEventListener('keydown', (e) => {
     const pickerOpen = !$('#picker').classList.contains('hidden');
     if (e.key === 'Escape') {
-      const busy = pickerOpen || !$('#settingsMenu').classList.contains('hidden');
+      const busy = pickerOpen || !$('#settingsMenu').classList.contains('hidden') || !$('#soundMenu').classList.contains('hidden');
       if (pickerOpen) closePicker(null);
       closeSettings();
+      closeSounds();
       closePersonMenu();
       if (state.cinema && !busy && !document.fullscreenElement) setCinema(null);
     }
