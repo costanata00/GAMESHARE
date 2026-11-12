@@ -24,6 +24,14 @@ contextBridge.exposeInMainWorld('gameshare', {
   closeNow: () => ipcRenderer.send('close-now'),
   attention: () => ipcRenderer.send('attention'),
   diagInfo: () => ipcRenderer.invoke('diag-info'),
+  // In-app updates (optional: only download when the user clicks)
+  ready: () => ipcRenderer.send('app-ready'),
+  updateInfo: () => ipcRenderer.invoke('update-info'),
+  checkUpdate: () => ipcRenderer.invoke('update-check'),
+  downloadUpdate: () => ipcRenderer.invoke('update-download'),
+  onUpdateProgress: (cb) => listen('update-progress', cb),
+  revertUpdate: () => ipcRenderer.invoke('update-revert'),
+  restartToUpdate: () => ipcRenderer.invoke('update-restart'),
   // Shared app's sound (Windows): raw 48 kHz 16-bit stereo PCM chunks
   appAudioSupported: () => ipcRenderer.invoke('app-audio-supported'),
   startAppAudio: (sourceId) => ipcRenderer.invoke('app-audio-start', sourceId),

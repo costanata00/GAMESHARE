@@ -303,7 +303,35 @@ const PT = {
   'the sound capture stopped': 'a captura de som parou',
 
   // ---- in-game overlay
-  'You’re muted': 'Você está silenciado'
+  'You’re muted': 'Você está silenciado',
+  // ---- updates
+  'Not now': 'Agora não',
+  'Skip this version': 'Pular esta versão',
+  'Check for updates': 'Procurar atualizações',
+  'Looks for a new GameShare when it opens. Nothing is installed unless you say so.': 'Procura um GameShare novo ao abrir. Nada é instalado sem você mandar.',
+  'Updates': 'Atualizações',
+  'Check now': 'Verificar agora',
+  'Checking…': 'Verificando…',
+  'GameShare {v} is available': 'GameShare {v} disponível',
+  'Update': 'Atualizar',
+  'Downloading GameShare {v}… {p}%': 'Baixando o GameShare {v}… {p}%',
+  'GameShare {v} is ready': 'GameShare {v} pronto',
+  'Restart now': 'Reiniciar agora',
+  'Later': 'Depois',
+  'It starts the next time you open GameShare.': 'Ele entra na próxima vez que você abrir o GameShare.',
+  'This version needs a fresh install. Download it and run the installer.': 'Esta versão precisa ser instalada de novo. Baixe e rode o instalador.',
+  'Download': 'Baixar',
+  'GameShare {v} needs a fresh install.': 'O GameShare {v} precisa ser instalado de novo.',
+  'Downloading… {p}%': 'Baixando… {p}%',
+  'GameShare {v} starts the next time you open GameShare.': 'O GameShare {v} entra na próxima vez que você abrir o GameShare.',
+  'You have the latest version.': 'Você está na versão mais recente.',
+  'Couldn’t check for updates ({error}).': 'Não deu para procurar atualizações ({error}).',
+  'Updates aren’t set up in this copy of GameShare.': 'As atualizações não estão configuradas nesta cópia do GameShare.',
+  'Version {v}': 'Versão {v}',
+  'Installed version: {v}.': 'Versão do instalador: {v}.',
+  'Back to {v}': 'Voltar para a {v}',
+  'Goes back to {v} the next time you open GameShare.': 'Volta para a {v} na próxima vez que você abrir o GameShare.',
+  'Update failed: {error}': 'A atualização falhou: {error}'
 };
 
 const LANGS = { pt: PT };
