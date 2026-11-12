@@ -165,10 +165,6 @@
               <option value="20000">20 Mbps</option>
             </select>
           </label>
-          <div class="menu-row">
-            <span class="menu-text"><b>Movie mode</b><small>Steadier picture for movies and videos. Friends see your screen about 1.5 s late, so not for games.</small></span>
-            <button id="movieBtn" class="switch" role="switch" aria-checked="false" aria-label="Movie mode"></button>
-          </div>
 
           <div class="menu-group">App</div>
           <label class="menu-row">
@@ -271,6 +267,14 @@
         </div>
       </div>
       <div id="sourceGrid" class="source-grid"></div>
+      <div class="mode-row">
+        <div class="tabs" role="radiogroup" aria-label="Sharing mode">
+          <button class="tab mode" role="radio" data-mode="game" aria-checked="true">Game</button>
+          <button class="tab mode" role="radio" data-mode="video" aria-checked="false">Video</button>
+        </div>
+        <span id="modeText" class="mode-text"></span>
+        <button id="modeSuggest" class="btn ghost mode-suggest hidden"></button>
+      </div>
       <div class="modal-foot">
         <label id="audioOpt" class="check hidden">
           <input type="checkbox" id="audioCheck" class="switch-input">

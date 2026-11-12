@@ -43,7 +43,7 @@ const QUALITY = {
   '1080p30': { w: 1920, h: 1080, fps: 30, bitrate: 4_500_000 },
   '1080p60': { w: 1920, h: 1080, fps: 60, bitrate: 8_000_000 }
 };
-// Bitrate choices in Settings (kbps per friend). 'auto' = the preset's, ×1.5 in movie mode.
+// Bitrate choices in Settings (kbps per friend). 'auto' = the preset's, ×1.5 in Video mode.
 const BITRATES = [3000, 5000, 8000, 12000, 16000, 20000];
 // All viewers of my screen together get at most this many times the preset's
 // bitrate, so a big room can't flood my upload (which makes everyone stutter).
@@ -52,12 +52,25 @@ const MIN_VIEWER_BITRATE = 350_000;
 // Incoming screens play this far behind live so late packets still make it
 // (grows by itself if freezes still happen). Voice is not delayed.
 const SCREEN_BUFFER_MS = 200, SCREEN_BUFFER_MAX = 600;
-// Movie mode (the sharer turns it on): friends play that screen well behind
-// live, which absorbs hiccups for a steady picture, and the sharer's encoder
-// gets more bitrate so it drops fewer frames. Voice is still not delayed.
-const MOVIE_BUFFER_MS = 1500, MOVIE_BUFFER_MAX = 3000, MOVIE_BITRATE_BOOST = 1.5;
-const bufferBase = (p) => (p.screenMovie ? MOVIE_BUFFER_MS : SCREEN_BUFFER_MS);
-const bufferMax = (p) => (p.screenMovie ? MOVIE_BUFFER_MAX : SCREEN_BUFFER_MAX);
+// Sharing modes, picked by the sharer in the share picker:
+//  - 'game': everything above. Lowest delay.
+//  - 'video' (films, YouTube, a player): smoothness beats delay. Friends play
+//    that screen about a second behind live, which absorbs hiccups (more if
+//    freezes still happen), and the sharer's encoder gets more bitrate so it
+//    drops fewer frames. Voice is still not delayed.
+const VIDEO_BUFFER_MS = 1000, VIDEO_BUFFER_MAX = 3000, VIDEO_BITRATE_BOOST = 1.5;
+// What a friend's hello / state / call says about their share. 1.6 only knew
+// "movie: true", which is treated as Video mode.
+const modeOf = (m) => (m && (m.mode === 'video' || (m.mode == null && m.movie)) ? 'video' : 'game');
+const isVideo = (p) => p.screenMode === 'video';
+const bufferBase = (p) => (isVideo(p) ? VIDEO_BUFFER_MS : SCREEN_BUFFER_MS);
+const bufferMax = (p) => (isVideo(p) ? VIDEO_BUFFER_MAX : SCREEN_BUFFER_MAX);
+// Windows that usually show a film or a video: the picker suggests Video mode
+// for them (it never switches by itself).
+// (Browser windows are titled "<page> - <browser name>".)
+const BROWSER_RE = /(google chrome|chromium|firefox|microsoft\W{0,3}edge|opera( gx)?|brave|vivaldi|safari)\s*$/i;
+const PLAYER_RE = /\bvlc\b|\bmpv\b|mpc-hc|mpc-be|media player|potplayer|\bkodi\b|\bplex\b|stremio|netflix|youtube|prime video|disney\+|twitch|movies & tv|filmes e tv/i;
+const looksLikeVideo = (name) => BROWSER_RE.test(name || '') || PLAYER_RE.test(name || '');
 // Heights a viewer can ask for. Coarse steps so small resizes don't churn the encoder.
 const VIEW_STEPS = [360, 540, 720, 1080];
 // Self-healing links. Friends ping each other every second; a link that
@@ -82,7 +95,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
+              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -92,6 +105,9 @@ const prefs = (() => {
     localStorage.removeItem('gs-people');
   } catch { /* ignore */ }
   if (!QUALITY[d.quality]) d.quality = '1080p30';
+  // 1.6 had a "Movie mode" switch in Settings; it became the Video mode.
+  if (d.shareMode !== 'game' && d.shareMode !== 'video') d.shareMode = d.movie === true ? 'video' : 'game';
+  delete d.movie;
   if (!BITRATES.includes(Number(d.bitrate))) d.bitrate = 'auto';
   d.roomSize = Math.min(MAX_LIMIT, Math.max(MIN_SIZE, Number(d.roomSize) || DEFAULT_SIZE));
   return d;
@@ -115,7 +131,7 @@ const state = {
   screenSound: { sound: 'none' }, // what sound my share carries (shown to viewers)
   headphones: prefs.headphones,   // headphones mode: echo cancellation off = cleaner voice
   quality: prefs.quality,
-  movie: prefs.movie === true, // movie mode for my share: steadier picture, more delay for viewers
+  mode: 'game',         // sharing mode of my current share: 'game' or 'video'
   peers: new Map(),     // peerId -> PeerInfo
   leaving: false,
   joinTimer: null,
@@ -744,7 +760,8 @@ function broadcast(msg) {
 
 function myState() {
   return { type: 'state', name: state.name, muted: state.muted, sharing: !!state.screen, deafened: state.deafened, color: state.color,
-           movie: !!state.screen && state.movie };
+           mode: state.screen ? state.mode : null,
+           movie: !!state.screen && state.mode === 'video' }; // movie: what 1.6 understands
 }
 
 // joining: I'm not in the room yet (the host answers with a welcome even if it
@@ -1252,7 +1269,7 @@ function onMessage(conn, msg) {
       if (Number.isInteger(msg.color) && msg.color >= 0 && msg.color < PLAYER_COLORS.length) p.color = msg.color;
       noteSharing(p, !!msg.sharing);
       if (!p.sharing) p.hidden = false;
-      setScreenMovie(p, !!msg.sharing && !!msg.movie);
+      setScreenMode(p, msg.sharing ? modeOf(msg) : 'game');
       checkColorClash();
       renderPeople();
       break;
@@ -1375,11 +1392,10 @@ function applyScreenBuffer(p) {
   }
 }
 
-// A friend turned movie mode on or off for their share: start over from the
-// matching cushion.
-function setScreenMovie(p, on) {
-  if (!!p.screenMovie === on) return;
-  p.screenMovie = on;
+// A friend's share changed mode: start over from the matching cushion.
+function setScreenMode(p, mode) {
+  if ((p.screenMode || 'game') === mode) return;
+  p.screenMode = mode;
   p.screenBuffer = bufferBase(p);
   p.freezePrev = null;
   applyScreenBuffer(p);
@@ -1400,10 +1416,10 @@ async function adaptScreenBuffers() {
     if (p.freezePrev == null) { p.freezePrev = freezes; p.calmSince = now; continue; }
     const before = p.screenBuffer || bufferBase(p);
     if (freezes > p.freezePrev) {
-      p.screenBuffer = Math.min(bufferMax(p), before + (p.screenMovie ? 250 : 100));
+      p.screenBuffer = Math.min(bufferMax(p), before + (isVideo(p) ? 500 : 100));
       p.calmSince = now;
     } else if (now - p.calmSince > 30000 && before > bufferBase(p)) {
-      p.screenBuffer = Math.max(bufferBase(p), before - (p.screenMovie ? 125 : 50));
+      p.screenBuffer = Math.max(bufferBase(p), before - (isVideo(p) ? 125 : 50));
       p.calmSince = now;
     }
     p.freezePrev = freezes;
@@ -1485,7 +1501,7 @@ function onIncomingCall(call) {
     p.screenSound = snd && typeof snd === 'object'
       ? { sound: String(snd.sound || 'none'), app: snd.app ? String(snd.app).slice(0, 60) : null }
       : null; // null = friend runs an older GameShare that doesn't say
-    p.screenMovie = !!(call.metadata && call.metadata.movie);
+    p.screenMode = modeOf(call.metadata);
     p.screenBuffer = bufferBase(p);
     p.freezePrev = null;
     call.on('stream', (remote) => {
@@ -1529,7 +1545,7 @@ function watchIce(call) {
 function sendScreenTo(p) {
   if (!state.screen || !state.peer || state.peer.disconnected) return;
   if (p.screenOut) { const old = p.screenOut; p.screenOut = null; try { old.close(); } catch { /* ignore */ } }
-  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, movie: state.movie }, sdpTransform: screenSdp });
+  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, mode: state.mode, movie: state.mode === 'video' }, sdpTransform: screenSdp });
   if (!call) return;
   call.gsAt = performance.now();
   p.screenOut = call;
@@ -1690,18 +1706,20 @@ async function checkStuckShares() {
 
 // The most one friend can get from my screen (bits/s) before it's sized to
 // how big they watch it: the bitrate picked in Settings, or the preset's.
+// Video mode for my share (or, while not sharing, the mode the picker remembers).
+const videoShare = () => (state.screen ? state.mode : prefs.shareMode) === 'video';
+const autoBitrate = () => QUALITY[state.quality].bitrate * (videoShare() ? VIDEO_BITRATE_BOOST : 1);
 function shareBitrate() {
   const kbps = Number(prefs.bitrate);
   if (BITRATES.includes(kbps)) return kbps * 1000;
-  return QUALITY[state.quality].bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
+  return autoBitrate();
 }
 
 // Settings → Bitrate: the Automatic choice says what it currently means.
 function updateBitrateUi() {
   const sel = $('#bitrateSelect');
   if (!sel) return;
-  const auto = QUALITY[state.quality].bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
-  const mbps = (auto / 1e6).toLocaleString(i18n.current() === 'pt' ? 'pt-BR' : 'en', { maximumFractionDigits: 2 });
+  const mbps = (autoBitrate() / 1e6).toLocaleString(i18n.current() === 'pt' ? 'pt-BR' : 'en', { maximumFractionDigits: 2 });
   sel.querySelector('option[value="auto"]').textContent = tr('Automatic ({n} Mbps)', { n: mbps });
   sel.value = String(prefs.bitrate);
 }
@@ -1735,6 +1753,8 @@ async function startShare() {
   await applyCaptureQuality(track);
   track.addEventListener('ended', stopShare);
 
+  state.mode = pick.mode === 'video' ? 'video' : 'game';
+  state.shareName = pick.name || '';
   state.screenSound = { sound: 'none' };
   if (pick.audio) {
     try {
@@ -1748,6 +1768,7 @@ async function startShare() {
   }
 
   state.screen = stream;
+  updateBitrateUi();
   addTile('me', stream, true);
   state.previewHidden = false;
   // (friends who are reconnecting get it once they're back)
@@ -1774,6 +1795,8 @@ function stopShare() {
   stopAppAudioTrack();
   state.screen.getTracks().forEach((t) => t.stop());
   state.screen = null;
+  state.mode = 'game';
+  updateBitrateUi();
   state.previewHidden = false;
   for (const p of state.peers.values()) {
     p.unwatched = false;
@@ -1795,7 +1818,30 @@ let pickerResolve = null;
 let pickerSources = [];
 let pickerKind = 'window';
 let pickerSelected = null;
+let pickerMode = 'game';
 let thumbRound = 0;
+
+// Game or Video: the sharer's choice, remembered. For a browser or a video
+// player the picker only suggests Video.
+function setShareMode(mode) {
+  pickerMode = mode === 'video' ? 'video' : 'game';
+  renderShareMode();
+}
+
+function renderShareMode() {
+  document.querySelectorAll('#picker .mode').forEach((b) => {
+    const on = b.dataset.mode === pickerMode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+  $('#modeText').textContent = pickerMode === 'video'
+    ? tr('For films and videos: steady picture, richer sound. Friends see it about 1 s late.')
+    : tr('For playing: the lowest delay.');
+  const src = pickerSources.find((s) => s.id === pickerSelected);
+  const suggest = pickerMode === 'game' && !!src && src.kind === 'window' && looksLikeVideo(src.name);
+  $('#modeSuggest').classList.toggle('hidden', !suggest);
+  $('#modeSuggest').textContent = tr('Watching a video? Use Video mode');
+}
 
 async function openPicker() {
   const modal = $('#picker');
@@ -1803,6 +1849,8 @@ async function openPicker() {
   $('#audioCheck').checked = !!prefs.shareSound;
   $('#pickerGo').disabled = true;
   pickerSelected = null;
+  pickerSources = [];
+  setShareMode(prefs.shareMode);
   modal.classList.remove('hidden');
 
   const done = new Promise((resolve) => { pickerResolve = resolve; });
@@ -1831,6 +1879,7 @@ async function loadSources() {
   if (pickerSelected && !pickerSources.some((s) => s.id === pickerSelected)) pickerSelected = null;
   $('#pickerGo').disabled = !pickerSelected;
   renderSources();
+  renderShareMode();
 
   try {
     const withThumbs = await window.gameshare.listSources({ thumbs: true });
@@ -1897,6 +1946,7 @@ function renderSources() {
       $('#pickerGo').disabled = false;
       grid.querySelectorAll('.source').forEach((x) => x.classList.remove('selected'));
       b.classList.add('selected');
+      renderShareMode();
     });
     b.addEventListener('dblclick', () => { pickerSelected = s.id; goPicker(); });
     grid.appendChild(b);
@@ -1907,9 +1957,12 @@ function renderSources() {
 
 function goPicker() {
   if (!pickerSelected) return;
+  const src = pickerSources.find((s) => s.id === pickerSelected);
   prefs.lastSource = pickerSelected;
+  prefs.shareMode = pickerMode;
   savePrefs();
-  closePicker({ id: pickerSelected, audio: $('#audioCheck').checked && appAudio.supported });
+  closePicker({ id: pickerSelected, audio: $('#audioCheck').checked && appAudio.supported, mode: pickerMode,
+                name: src ? src.name : '', kind: src ? src.kind : 'window' });
 }
 
 /* ------------------------------------------------------------ stage tiles */
@@ -2776,11 +2829,11 @@ async function updateStats() {
         lines.push(describeOut(p.name, s, p, compact));
         if (s && s.impl && !enc) enc = compact ? (s.hw == null ? '' : tr(s.hw ? 'hardware encoding' : 'software encoding')) : coder(s, 'encoding');
       }
-      text = lines.length ? [...lines, enc, state.movie ? tr('movie mode') : ''].filter(Boolean).join('\n') : tr('Nobody is watching yet');
+      text = lines.length ? [...lines, enc, state.mode === 'video' ? tr('Video mode') : ''].filter(Boolean).join('\n') : tr('Nobody is watching yet');
     } else {
       const p = state.peers.get(id);
       text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact) : tr('reconnecting…');
-      if (p && p.screenIn && p.screenMovie) text += compact ? ` · ${tr('movie')}` : `\n${tr('movie mode')}`;
+      if (p && p.screenIn && isVideo(p)) text += compact ? ` · ${tr('video')}` : `\n${tr('Video mode')}`;
     }
     if (box.textContent !== text) box.textContent = text;
   }
@@ -2823,14 +2876,14 @@ async function diagnostics() {
     L.push(`Room ${state.code}: ${greetedCount()}/${state.maxPeople} players · host: ${holderName()}`);
     L.push(`Me (${state.name}): ${state.muted ? 'muted' : 'mic on'}${state.micReal ? '' : ' (no microphone found)'} · ${state.deafened ? 'voices muted' : 'hearing voices'} · ${state.screen ? 'sharing' : 'not sharing'}`);
   }
-  L.push(`Settings: quality ${state.quality} · bitrate ${prefs.bitrate === 'auto' ? 'auto' : prefs.bitrate + ' kbps'} (${Math.round(shareBitrate() / 1000)} kbps per friend) · movie mode ${state.movie ? 'on' : 'off'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
+  L.push(`Settings: quality ${state.quality} · bitrate ${prefs.bitrate === 'auto' ? 'auto' : prefs.bitrate + ' kbps'} (${Math.round(shareBitrate() / 1000)} kbps per friend) · sharing mode ${state.screen ? state.mode : prefs.shareMode + ' (not sharing)'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
   L.push(`Devices: microphone "${sel('#micSelect')}" · output "${sel('#outSelect')}"`);
   for (const p of state.peers.values()) {
     if (!p.greeted) continue;
     L.push('');
     L.push(`${p.name} (GameShare ${p.version || 'older than 1.2'}): ${p.lost ? `RECONNECTING for ${Math.round((performance.now() - p.lost) / 1000)} s` : 'connected'} · ${netText(p.net, trEn)}`);
     L.push(`  link ${health(p.conn)} · voice ${health(p.voice)}${p.localMuted ? ' (muted by me)' : ''}${p.muted ? ' · their mic is off' : ''}`);
-    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + (p.screenMovie ? ' · movie mode' : ''));
+    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + ` · ${p.screenMode || 'game'} mode`);
     else if (p.sharing) L.push(`  their screen: ${p.hidden ? 'closed by me' : 'not received'}`);
     if (p.screenOut) {
       const s = await callStats(p.screenOut, 'out');
@@ -2900,7 +2953,6 @@ function updateControls() {
   micBtn.title = state.muted ? tr('Unmute your mic (Ctrl+Shift+M)') : tr('Mute your mic (Ctrl+Shift+M)');
   deafBtn.title = state.deafened ? tr('Hear everyone’s voice again (Ctrl+Shift+D)') : tr('Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)');
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
-  $('#movieBtn').setAttribute('aria-checked', String(state.movie));
   updateBitrateUi();
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
   $('#globalKeysBtn').setAttribute('aria-checked', String(prefs.globalKeys !== false));
@@ -2935,7 +2987,7 @@ function setLanguage(pref) {
   }
   refreshDevices();
   renderUpdate();
-  if (!$('#picker').classList.contains('hidden')) renderSources();
+  if (!$('#picker').classList.contains('hidden')) { renderSources(); renderShareMode(); }
   if (prefs.stats) updateStats();
   pushOverlay();
 }
@@ -3611,18 +3663,8 @@ function init() {
       toast(tr('Quality updated'));
     }
   });
-  $('#movieBtn').addEventListener('click', () => {
-    state.movie = !state.movie;
-    prefs.movie = state.movie;
-    savePrefs();
-    updateControls();
-    if (state.screen) {
-      for (const p of state.peers.values()) p.encSig = null;
-      retuneAll();
-      broadcast(myState()); // friends switch their cushion for my screen
-      toast(state.movie ? tr('Movie mode on: friends see your screen about 1.5 s late') : tr('Movie mode off'));
-    }
-  });
+  document.querySelectorAll('#picker .mode').forEach((b) => b.addEventListener('click', () => setShareMode(b.dataset.mode)));
+  $('#modeSuggest').addEventListener('click', () => setShareMode('video'));
   updateControls();
 
   $('#peopleToggle').addEventListener('click', () => setPeoplePanel($('#room').classList.contains('collapsed')));
