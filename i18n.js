@@ -274,6 +274,19 @@ const PT = {
   'held back by {why}': 'limitado por {why}',
   'video': 'vídeo',
   'Video mode': 'Modo Vídeo',
+  'Game mode': 'Modo Jogo',
+  'aims for {n} ms': 'meta de {n} ms',
+  'sound {n} kbps': 'som {n} kbps',
+  'sound in sync': 'som em sincronia',
+  'sound {n} ms late': 'som {n} ms atrasado',
+  'sound {n} ms early': 'som {n} ms adiantado',
+  'source {n} fps': 'origem {n} fps',
+  'still: keeping it sharp': 'parado: mantendo a nitidez',
+  'sound waits {n} ms': 'som espera {n} ms',
+  'Close': 'Fechar',
+  'Your shared window looks black': 'A janela que você está compartilhando parece preta',
+  'Streaming sites like Netflix, Prime Video and Disney+ protect their video, so a screen capture gets a black picture. What usually brings it back: in that browser’s settings, turn off “Use graphics acceleration when available” (hardware acceleration) and restart the browser. GameShare doesn’t get around the protection: if it stays black, that site can’t be shared.':
+    'Sites de streaming como Netflix, Prime Video e Disney+ protegem o vídeo, então a captura de tela recebe uma imagem preta. O que costuma resolver: nas configurações desse navegador, desative “Usar aceleração gráfica quando disponível” (aceleração de hardware) e reinicie o navegador. O GameShare não contorna a proteção: se continuar preto, esse site não pode ser compartilhado.',
   'Nobody is watching yet': 'Ninguém está assistindo ainda',
 
   // ---- share picker
