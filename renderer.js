@@ -469,7 +469,23 @@ function screenSdp(mode) {
 
 /* ------------------------------------------------------------ shared app sound */
 
-const appAudio = { supported: false, ctx: null, node: null, track: null, info: null };
+// stat: the sound buffer's last report (see app-audio-worklet.js)
+const appAudio = { supported: false, ctx: null, node: null, track: null, info: null, port: null, stat: null, direct: false };
+
+// The main process's direct line for the sound (see preload.js). It can
+// arrive before or after the audio node exists; whichever comes second
+// connects them.
+window.addEventListener('message', (e) => {
+  if (e.source !== window || !e.data || e.data.gsAppAudioPort !== true || !e.ports.length) return;
+  appAudio.port = e.ports[0];
+  feedAppAudio();
+});
+function feedAppAudio() {
+  if (!appAudio.port || !appAudio.node) return;
+  const port = appAudio.port;
+  appAudio.port = null;
+  try { appAudio.node.port.postMessage({ feed: port }, [port]); appAudio.direct = true; } catch (e) { console.warn('app audio port', e); }
+}
 
 // Why the sound helper couldn't start, in words (its own messages are technical English).
 function audioWhy(msg) {
@@ -502,7 +518,11 @@ async function startAppAudioTrack(sourceId) {
   window.gameshare.onAppAudioEnded(() => {
     if (appAudio.node === node && state.screen) toast(tr('The shared app’s sound stopped.'), 'warn');
   });
+  node.port.onmessage = (e) => { if (appAudio.node === node) appAudio.stat = { ...e.data, at: performance.now() }; };
   appAudio.node = node;
+  appAudio.stat = null;
+  appAudio.direct = false;
+  feedAppAudio();
   appAudio.track = dest.stream.getAudioTracks()[0];
   appAudio.track.contentHint = 'music';
   return appAudio.track;
@@ -511,6 +531,8 @@ async function startAppAudioTrack(sourceId) {
 function stopAppAudioTrack() {
   window.gameshare.stopAppAudio();
   if (appAudio.node) { try { appAudio.node.disconnect(); } catch { /* ignore */ } appAudio.node = null; }
+  appAudio.port = null;
+  appAudio.stat = null;
   if (appAudio.track) { appAudio.track.stop(); appAudio.track = null; }
 }
 

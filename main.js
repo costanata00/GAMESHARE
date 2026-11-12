@@ -1,6 +1,6 @@
 // GameShare — Electron main process
 const { app, BrowserWindow, desktopCapturer, session, ipcMain, shell, systemPreferences,
-        globalShortcut, nativeTheme, screen } = require('electron');
+        globalShortcut, nativeTheme, screen, MessageChannelMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -307,8 +307,20 @@ app.on('will-quit', () => globalShortcut.unregisterAll());
  * sound via the Windows process-loopback API and streams raw PCM
  * (48 kHz, 16-bit, stereo) on stdout. We forward it to the page, which turns
  * it into an audio track for the screen share.
+ *
+ * The sound goes over a direct line (a MessagePort) that the page hands to its
+ * audio thread, so chunks don't wait behind whatever the page is busy with.
+ * Waiting there would make them arrive in bursts, which needs a bigger buffer,
+ * which is delay between the stream's picture and its sound.
  */
 let audioProc = null;
+let audioPort = null; // our end of the direct line to the page's audio thread
+
+function closeAudioPort() {
+  if (!audioPort) return;
+  try { audioPort.close(); } catch { /* ignore */ }
+  audioPort = null;
+}
 
 function helperCommand(mode, arg) {
   // Test hook: GAMESHARE_AUDIO_HELPER=/path/to/script.js runs a stand-in helper.
@@ -331,6 +343,7 @@ function stopAppAudio() {
   if (!audioProc) return;
   const p = audioProc;
   audioProc = null;
+  closeAudioPort();
   try { p.stdin.end(); } catch { /* ignore */ }
   setTimeout(() => { try { p.kill(); } catch { /* ignore */ } }, 500);
 }
@@ -380,13 +393,26 @@ ipcMain.handle('app-audio-start', (event, sourceId) => {
       return;
     }
     audioProc = proc;
+    closeAudioPort();
+    let port = null;
+    try {
+      const ch = new MessageChannelMain();
+      sender.postMessage('app-audio-port', null, [ch.port2]);
+      port = audioPort = ch.port1;
+      port.start();
+    } catch (e) { console.warn('app audio: no direct line, using the page:', e.message); }
     let carry = null;
     proc.stdout.on('data', (chunk) => {
       if (audioProc !== proc || sender.isDestroyed()) return;
       if (carry) { chunk = Buffer.concat([carry, chunk]); carry = null; }
       const whole = chunk.length - (chunk.length % 4); // keep whole stereo frames
       if (whole < chunk.length) carry = chunk.subarray(whole);
-      if (whole) sender.send('app-audio-data', chunk.subarray(0, whole));
+      if (!whole) return;
+      const pcm = chunk.subarray(0, whole);
+      if (port && audioPort === port) {
+        try { port.postMessage(new Uint8Array(pcm)); return; } catch { port = null; }
+      }
+      sender.send('app-audio-data', pcm);
     });
     let errText = '';
     proc.stderr.setEncoding('utf8');
