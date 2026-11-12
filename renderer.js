@@ -95,7 +95,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
+              micId: '', outId: '', duck: false, duckTo: 40, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -110,6 +110,7 @@ const prefs = (() => {
   delete d.movie;
   if (!BITRATES.includes(Number(d.bitrate))) d.bitrate = 'auto';
   d.roomSize = Math.min(MAX_LIMIT, Math.max(MIN_SIZE, Number(d.roomSize) || DEFAULT_SIZE));
+  d.duckTo = Math.min(80, Math.max(10, Number(d.duckTo) || 40));
   return d;
 })();
 function savePrefs() {
@@ -388,7 +389,7 @@ function setSpeaking(key, on) {
   if (m) m.el.classList.toggle('speaking', on);
   const slot = document.querySelector(`#slots [data-key="${CSS.escape(key)}"]`);
   if (slot) slot.classList.toggle('speaking', on);
-  if (key !== 'me') pushOverlay();
+  if (key !== 'me') { pushOverlay(); updateDuck(); }
 }
 
 /* ------------------------------------------------------------ SDP tuning */
@@ -567,8 +568,52 @@ function applyAudio(p) {
   const t = tiles.get(p.id);
   if (t) {
     t.video.muted = !!p.tileSoundOff;
-    t.video.volume = p.streamVolume == null ? 1 : p.streamVolume;
+    t.video.volume = (p.streamVolume == null ? 1 : p.streamVolume) * duck.level;
   }
+}
+
+/* Voice over the film (Settings → Voice, off by default, only for me): while
+ * a friend I can hear is talking, every stream's sound drops to a share of
+ * its volume (prefs.duckTo, in %), and comes back when they stop. Down
+ * quickly (about 0.2 s), back up gently (about 0.6 s after a short hold), so
+ * it doesn't pump between words. */
+const duck = { level: 1, timer: null, holdUntil: 0 };
+
+function friendTalking() {
+  if (state.deafened) return false;
+  for (const p of state.peers.values()) if (p.greeted && !p.localMuted && isSpeaking(p.id)) return true;
+  return false;
+}
+
+function stepDuck() {
+  const now = performance.now();
+  const on = prefs.duck === true;
+  if (on && friendTalking()) duck.holdUntil = now + 500;
+  const target = on && now < duck.holdUntil ? clamp(prefs.duckTo, 10, 80) / 100 : 1;
+  const before = duck.level;
+  duck.level = target < before ? Math.max(target, before - 0.15) : Math.min(target, before + 0.04);
+  if (duck.level !== before) {
+    for (const [id, t] of tiles) {
+      const p = state.peers.get(id);
+      if (p && !t.isMe) t.video.volume = (p.streamVolume == null ? 1 : p.streamVolume) * duck.level;
+    }
+  } else if (target === 1) {
+    clearInterval(duck.timer);
+    duck.timer = null;
+  }
+}
+
+// Someone started or stopped talking, or the setting changed.
+function updateDuck() {
+  if (!duck.timer && (prefs.duck === true || duck.level !== 1)) duck.timer = setInterval(stepDuck, 40);
+}
+
+function updateDuckUi() {
+  $('#duckBtn').setAttribute('aria-checked', String(prefs.duck === true));
+  $('#duckRow').classList.toggle('hidden', prefs.duck !== true);
+  $('#duckSlider').value = String(prefs.duckTo);
+  $('#duckSlider').style.setProperty('--fill', `${((prefs.duckTo - 10) / 70) * 100}%`);
+  $('#duckText').textContent = tr('Streams play at {n}% of their volume while a friend talks', { n: prefs.duckTo });
 }
 
 function toggleLocalMute(id) {
@@ -3206,6 +3251,7 @@ function updateControls() {
   micBtn.title = state.muted ? tr('Unmute your mic (Ctrl+Shift+M)') : tr('Mute your mic (Ctrl+Shift+M)');
   deafBtn.title = state.deafened ? tr('Hear everyone’s voice again (Ctrl+Shift+D)') : tr('Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)');
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
+  updateDuckUi();
   updateBitrateUi();
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
   $('#globalKeysBtn').setAttribute('aria-checked', String(prefs.globalKeys !== false));
@@ -3915,6 +3961,18 @@ function init() {
       retuneAll();
       toast(tr('Quality updated'));
     }
+  });
+  $('#duckBtn').addEventListener('click', () => {
+    prefs.duck = prefs.duck !== true;
+    savePrefs();
+    updateDuckUi();
+    updateDuck();
+  });
+  $('#duckSlider').addEventListener('input', (e) => {
+    prefs.duckTo = clamp(Number(e.target.value) || 40, 10, 80);
+    savePrefs();
+    updateDuckUi();
+    updateDuck();
   });
   document.querySelectorAll('#picker .mode').forEach((b) => b.addEventListener('click', () => setShareMode(b.dataset.mode)));
   $('#modeSuggest').addEventListener('click', () => setShareMode('video'));

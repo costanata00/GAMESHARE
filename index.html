@@ -133,6 +133,14 @@
             <span class="menu-text"><b>Headphones mode</b><small>Clearer voice with echo cancellation off. Only with headphones.</small></span>
             <button id="headphonesBtn" class="switch" role="switch" aria-checked="false" aria-label="Headphones mode"></button>
           </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Lower streams while friends talk</b><small>Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.</small></span>
+            <button id="duckBtn" class="switch" role="switch" aria-checked="false" aria-label="Lower streams while friends talk"></button>
+          </div>
+          <label class="menu-row stack" id="duckRow">
+            <span class="menu-text"><small id="duckText"></small></span>
+            <input type="range" id="duckSlider" min="10" max="80" step="5" aria-label="Stream volume while friends talk">
+          </label>
 
           <div class="menu-group">Room</div>
           <div class="menu-row" id="sizeRow">
