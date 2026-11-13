@@ -106,12 +106,26 @@
           <button id="deafenBtn" class="dock-btn" aria-pressed="false" title="Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)">
             <span class="i i-headphones" aria-hidden="true"></span><span class="ctrl-label">Mute voices</span>
           </button>
+          <button id="sbBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Soundboard: play a sound to everyone in the room">
+            <span class="i i-sounds" aria-hidden="true"></span><span class="ctrl-label">Sounds</span>
+          </button>
           <button id="settingsBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Settings" data-label="Settings">
             <span class="i i-gear" aria-hidden="true"></span>
           </button>
           <button id="leaveBtn" class="dock-btn danger" title="Leave the room" data-label="Leave">
             <span class="i i-leave" aria-hidden="true"></span>
           </button>
+        </div>
+
+        <div id="soundMenu" class="menu sound-menu hidden" role="dialog" aria-label="Soundboard">
+          <div class="menu-group">Soundboard</div>
+          <p class="sb-hint">Click a sound and everyone in the room hears it, even while you’re muted. Click it again to stop.</p>
+          <div id="sbGrid" class="sb-grid"></div>
+          <div class="sb-foot">
+            <button id="sbAdd" class="btn ghost sb-add">Add sounds…</button>
+            <input type="range" id="sbVolume" min="5" max="100" step="5" title="Soundboard volume" aria-label="Soundboard volume">
+          </div>
+          <input type="file" id="sbFile" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac,.opus,.webm" multiple hidden>
         </div>
 
         <div id="settingsMenu" class="menu hidden" role="dialog" aria-label="Settings">
@@ -133,6 +147,14 @@
             <span class="menu-text"><b>Headphones mode</b><small>Clearer voice with echo cancellation off. Only with headphones.</small></span>
             <button id="headphonesBtn" class="switch" role="switch" aria-checked="false" aria-label="Headphones mode"></button>
           </div>
+          <div class="menu-row">
+            <span class="menu-text"><b>Lower streams while friends talk</b><small>Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.</small></span>
+            <button id="duckBtn" class="switch" role="switch" aria-checked="false" aria-label="Lower streams while friends talk"></button>
+          </div>
+          <label class="menu-row stack" id="duckRow">
+            <span class="menu-text"><small id="duckText"></small></span>
+            <input type="range" id="duckSlider" min="10" max="80" step="5" aria-label="Stream volume while friends talk">
+          </label>
 
           <div class="menu-group">Room</div>
           <div class="menu-row" id="sizeRow">
@@ -165,10 +187,6 @@
               <option value="20000">20 Mbps</option>
             </select>
           </label>
-          <div class="menu-row">
-            <span class="menu-text"><b>Movie mode</b><small>Steadier picture for movies and videos. Friends see your screen about 1.5 s late, so not for games.</small></span>
-            <button id="movieBtn" class="switch" role="switch" aria-checked="false" aria-label="Movie mode"></button>
-          </div>
 
           <div class="menu-group">App</div>
           <label class="menu-row">
@@ -271,6 +289,14 @@
         </div>
       </div>
       <div id="sourceGrid" class="source-grid"></div>
+      <div class="mode-row">
+        <div class="tabs" role="radiogroup" aria-label="Sharing mode">
+          <button class="tab mode" role="radio" data-mode="game" aria-checked="true">Game</button>
+          <button class="tab mode" role="radio" data-mode="video" aria-checked="false">Video</button>
+        </div>
+        <span id="modeText" class="mode-text"></span>
+        <button id="modeSuggest" class="btn ghost mode-suggest hidden"></button>
+      </div>
       <div class="modal-foot">
         <label id="audioOpt" class="check hidden">
           <input type="checkbox" id="audioCheck" class="switch-input">
