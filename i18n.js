@@ -154,6 +154,32 @@ const PT = {
   'Filters out keyboard, fans and game sound picked up by your mic':
     'Filtra teclado, ventoinhas e som do jogo captados pelo seu microfone',
   'Headphones mode': 'Modo fone de ouvido',
+  // ---- soundboard
+  'Sounds': 'Sons',
+  'Sound': 'Som',
+  'Soundboard': 'Soundboard',
+  'Soundboard: play a sound to everyone in the room': 'Soundboard: toque um som para todos na sala',
+  'Click a sound and everyone in the room hears it, even while you’re muted. Click it again to stop.':
+    'Clique em um som e todos na sala ouvem, mesmo com você silenciado. Clique de novo para parar.',
+  'Add sounds…': 'Adicionar sons…',
+  'Soundboard volume': 'Volume da soundboard',
+  'No sounds yet. Add audio files (MP3, WAV, OGG…) and they stay saved on this computer.':
+    'Nenhum som ainda. Adicione arquivos de áudio (MP3, WAV, OGG…) e eles ficam salvos neste computador.',
+  'Remove “{name}”': 'Remover “{name}”',
+  '“{name}” removed': '“{name}” removido',
+  'Couldn’t read “{name}” as audio.': 'Não deu para ler “{name}” como áudio.',
+  '“{name}” is too big (over {n} MB).': '“{name}” é grande demais (mais de {n} MB).',
+  '“{name}” is too long (over {n} s).': '“{name}” é longo demais (mais de {n} s).',
+  'The soundboard is full ({n} sounds). Remove one first.': 'A soundboard está cheia ({n} sons). Remova um antes.',
+  'Couldn’t save the sound on this computer.': 'Não deu para salvar o som neste computador.',
+  'Couldn’t play that sound.': 'Não deu para tocar esse som.',
+  '{n} sound added': '{n} som adicionado',
+  '{n} sounds added': '{n} sons adicionados',
+  'Lower streams while friends talk': 'Abaixar os streams quando alguém fala',
+  'Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.':
+    'Abaixa um pouco o som das telas compartilhadas enquanto alguém fala, para você ouvir a pessoa por cima do filme.',
+  'Stream volume while friends talk': 'Volume do stream enquanto alguém fala',
+  'Streams play at {n}% of their volume while a friend talks': 'Os streams tocam a {n}% do volume enquanto um amigo fala',
   'Clearer voice with echo cancellation off. Only with headphones.':
     'Voz mais limpa, com o cancelamento de eco desligado. Só com fone de ouvido.',
   'How many players can be in this room': 'Quantos jogadores cabem nesta sala',
@@ -172,9 +198,13 @@ const PT = {
     'O máximo que cada amigo recebe de você. Mais alta deixa jogos rápidos mais nítidos, mas usa mais upload. Abaixe se travar para os amigos.',
   'Automatic ({n} Mbps)': 'Automática ({n} Mbps)',
   'Bitrate updated': 'Taxa de bits atualizada',
-  'Movie mode': 'Modo filme',
-  'Steadier picture for movies and videos. Friends see your screen about 1.5 s late, so not for games.':
-    'Imagem mais estável para filmes e vídeos. Seus amigos veem sua tela cerca de 1,5 s atrasada, então não é para jogos.',
+  'Sharing mode': 'Modo de compartilhamento',
+  'Game': 'Jogo',
+  'Video': 'Vídeo',
+  'For playing: the lowest delay.': 'Para jogar: o menor atraso.',
+  'For films and videos: steady picture, richer sound. Friends see it about 1 s late.':
+    'Para filmes e vídeos: imagem estável e som melhor. Os amigos veem com cerca de 1 s de atraso.',
+  'Watching a video? Use Video mode': 'Vai assistir a um vídeo? Use o modo Vídeo',
   'App': 'Aplicativo',
   'In-game overlay': 'Overlay no jogo',
   'Shows who’s talking on top of your game. Works with borderless and windowed games.':
@@ -204,9 +234,6 @@ const PT = {
   'Overlay on: it shows who’s talking while you’re in another window, like your game.':
     'Overlay ligado: mostra quem está falando enquanto você está em outra janela, como o seu jogo.',
   'Quality updated': 'Qualidade atualizada',
-  'Movie mode on: friends see your screen about 1.5 s late':
-    'Modo filme ligado: seus amigos veem sua tela cerca de 1,5 s atrasada',
-  'Movie mode off': 'Modo filme desligado',
 
   // ---- microphone
   'Your chosen microphone isn’t connected. Using the system default.':
@@ -235,6 +262,11 @@ const PT = {
   'Show stream numbers: resolution, frame rate, bitrate, delay':
     'Mostrar os dados da transmissão: resolução, fps, taxa de bits e atraso',
   'Full screen': 'Tela cheia',
+  'Cinema': 'Cinema',
+  'Cinema mode: only this screen, as big as the window (Ctrl+Shift+C)': 'Modo cinema: só esta tela, do tamanho da janela (Ctrl+Shift+C)',
+  'Leave cinema mode (Esc or Ctrl+Shift+C)': 'Sair do modo cinema (Esc ou Ctrl+Shift+C)',
+  'Cinema mode needs a friend’s screen to watch.': 'O modo cinema precisa da tela de um amigo para assistir.',
+  'Cinema mode. Press Esc or Ctrl+Shift+C to leave.': 'Modo cinema. Aperte Esc ou Ctrl+Shift+C para sair.',
   'Exit full screen': 'Sair da tela cheia',
   'Couldn’t go full screen.': 'Não foi possível ir para a tela cheia.',
   'Hide my preview (keeps sharing)': 'Esconder minha prévia (continua compartilhando)',
@@ -271,8 +303,21 @@ const PT = {
   'held back by your CPU': 'limitado pelo seu processador',
   'held back by the connection': 'limitado pela conexão',
   'held back by {why}': 'limitado por {why}',
-  'movie': 'filme',
-  'movie mode': 'modo filme',
+  'video': 'vídeo',
+  'Video mode': 'Modo Vídeo',
+  'Game mode': 'Modo Jogo',
+  'aims for {n} ms': 'meta de {n} ms',
+  'sound {n} kbps': 'som {n} kbps',
+  'sound in sync': 'som em sincronia',
+  'sound {n} ms late': 'som {n} ms atrasado',
+  'sound {n} ms early': 'som {n} ms adiantado',
+  'source {n} fps': 'origem {n} fps',
+  'still: keeping it sharp': 'parado: mantendo a nitidez',
+  'sound waits {n} ms': 'som espera {n} ms',
+  'Close': 'Fechar',
+  'Your shared window looks black': 'A janela que você está compartilhando parece preta',
+  'Streaming sites like Netflix, Prime Video and Disney+ protect their video, so a screen capture gets a black picture. What usually brings it back: in that browser’s settings, turn off “Use graphics acceleration when available” (hardware acceleration) and restart the browser. GameShare doesn’t get around the protection: if it stays black, that site can’t be shared.':
+    'Sites de streaming como Netflix, Prime Video e Disney+ protegem o vídeo, então a captura de tela recebe uma imagem preta. O que costuma resolver: nas configurações desse navegador, desative “Usar aceleração gráfica quando disponível” (aceleração de hardware) e reinicie o navegador. O GameShare não contorna a proteção: se continuar preto, esse site não pode ser compartilhado.',
   'Nobody is watching yet': 'Ninguém está assistindo ainda',
 
   // ---- share picker

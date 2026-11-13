@@ -43,7 +43,7 @@ const QUALITY = {
   '1080p30': { w: 1920, h: 1080, fps: 30, bitrate: 4_500_000 },
   '1080p60': { w: 1920, h: 1080, fps: 60, bitrate: 8_000_000 }
 };
-// Bitrate choices in Settings (kbps per friend). 'auto' = the preset's, ×1.5 in movie mode.
+// Bitrate choices in Settings (kbps per friend). 'auto' = the preset's, ×1.5 in Video mode.
 const BITRATES = [3000, 5000, 8000, 12000, 16000, 20000];
 // All viewers of my screen together get at most this many times the preset's
 // bitrate, so a big room can't flood my upload (which makes everyone stutter).
@@ -52,12 +52,25 @@ const MIN_VIEWER_BITRATE = 350_000;
 // Incoming screens play this far behind live so late packets still make it
 // (grows by itself if freezes still happen). Voice is not delayed.
 const SCREEN_BUFFER_MS = 200, SCREEN_BUFFER_MAX = 600;
-// Movie mode (the sharer turns it on): friends play that screen well behind
-// live, which absorbs hiccups for a steady picture, and the sharer's encoder
-// gets more bitrate so it drops fewer frames. Voice is still not delayed.
-const MOVIE_BUFFER_MS = 1500, MOVIE_BUFFER_MAX = 3000, MOVIE_BITRATE_BOOST = 1.5;
-const bufferBase = (p) => (p.screenMovie ? MOVIE_BUFFER_MS : SCREEN_BUFFER_MS);
-const bufferMax = (p) => (p.screenMovie ? MOVIE_BUFFER_MAX : SCREEN_BUFFER_MAX);
+// Sharing modes, picked by the sharer in the share picker:
+//  - 'game': everything above. Lowest delay.
+//  - 'video' (films, YouTube, a player): smoothness beats delay. Friends play
+//    that screen about a second behind live, which absorbs hiccups (more if
+//    freezes still happen), and the sharer's encoder gets more bitrate so it
+//    drops fewer frames. Voice is still not delayed.
+const VIDEO_BUFFER_MS = 1000, VIDEO_BUFFER_MAX = 3000, VIDEO_BITRATE_BOOST = 1.5;
+// What a friend's hello / state / call says about their share. 1.6 only knew
+// "movie: true", which is treated as Video mode.
+const modeOf = (m) => (m && (m.mode === 'video' || (m.mode == null && m.movie)) ? 'video' : 'game');
+const isVideo = (p) => p.screenMode === 'video';
+const bufferBase = (p) => (isVideo(p) ? VIDEO_BUFFER_MS : SCREEN_BUFFER_MS);
+const bufferMax = (p) => (isVideo(p) ? VIDEO_BUFFER_MAX : SCREEN_BUFFER_MAX);
+// Windows that usually show a film or a video: the picker suggests Video mode
+// for them (it never switches by itself).
+// (Browser windows are titled "<page> - <browser name>".)
+const BROWSER_RE = /(google chrome|chromium|firefox|microsoft\W{0,3}edge|opera( gx)?|brave|vivaldi|safari)\s*$/i;
+const PLAYER_RE = /\bvlc\b|\bmpv\b|mpc-hc|mpc-be|media player|potplayer|\bkodi\b|\bplex\b|stremio|netflix|youtube|prime video|disney\+|twitch|movies & tv|filmes e tv/i;
+const looksLikeVideo = (name) => BROWSER_RE.test(name || '') || PLAYER_RE.test(name || '');
 // Heights a viewer can ask for. Coarse steps so small resizes don't churn the encoder.
 const VIEW_STEPS = [360, 540, 720, 1080];
 // Self-healing links. Friends ping each other every second; a link that
@@ -82,7 +95,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, movie: false, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
+              micId: '', outId: '', duck: false, duckTo: 40, sbVolume: 60, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -92,8 +105,13 @@ const prefs = (() => {
     localStorage.removeItem('gs-people');
   } catch { /* ignore */ }
   if (!QUALITY[d.quality]) d.quality = '1080p30';
+  // 1.6 had a "Movie mode" switch in Settings; it became the Video mode.
+  if (d.shareMode !== 'game' && d.shareMode !== 'video') d.shareMode = d.movie === true ? 'video' : 'game';
+  delete d.movie;
   if (!BITRATES.includes(Number(d.bitrate))) d.bitrate = 'auto';
   d.roomSize = Math.min(MAX_LIMIT, Math.max(MIN_SIZE, Number(d.roomSize) || DEFAULT_SIZE));
+  d.duckTo = Math.min(80, Math.max(10, Number(d.duckTo) || 40));
+  d.sbVolume = Math.min(100, Math.max(5, Number(d.sbVolume) || 60));
   return d;
 })();
 function savePrefs() {
@@ -115,7 +133,7 @@ const state = {
   screenSound: { sound: 'none' }, // what sound my share carries (shown to viewers)
   headphones: prefs.headphones,   // headphones mode: echo cancellation off = cleaner voice
   quality: prefs.quality,
-  movie: prefs.movie === true, // movie mode for my share: steadier picture, more delay for viewers
+  mode: 'game',         // sharing mode of my current share: 'game' or 'video'
   peers: new Map(),     // peerId -> PeerInfo
   leaving: false,
   joinTimer: null,
@@ -130,7 +148,8 @@ const state = {
   joinedAt: 0,          // when I joined (decides who re-picks on a colour clash)
   boot: Math.random().toString(36).slice(2, 10), // new on every start: friends can tell I restarted
   resume: null,         // after a crash: who I was in the room, to slip back in as the same player
-  quietUntil: 0         // no "joined" toasts until then (friends reconnecting after my restart)
+  quietUntil: 0,        // no "joined" toasts until then (friends reconnecting after my restart)
+  cinema: null          // cinema mode: the id of the friend's screen that fills the window
 };
 
 const roomId = () => (state.code ? ROOM_PREFIX + state.code : '');
@@ -149,6 +168,27 @@ function toast(msg, kind = '') {
   $('#toasts').appendChild(t);
   setTimeout(() => t.classList.add('out'), 3600);
   setTimeout(() => t.remove(), 4100);
+}
+
+// A notice that stays until it's closed (one per key), for things worth
+// reading properly. Shown where the toasts are.
+const notices = new Map();
+function showNotice(key, title, text) {
+  closeNotice(key);
+  const n = el('div', 'toast notice warn');
+  n.setAttribute('role', 'alert');
+  const x = el('button', 'notice-close', '✕');
+  x.title = tr('Close');
+  x.setAttribute('aria-label', x.title);
+  x.addEventListener('click', () => closeNotice(key));
+  n.append(el('b', null, title), el('p', null, text), x);
+  $('#toasts').appendChild(n);
+  notices.set(key, n);
+}
+function closeNotice(key) {
+  const n = notices.get(key);
+  if (n) n.remove();
+  notices.delete(key);
 }
 
 function initials(name) {
@@ -351,7 +391,7 @@ function setSpeaking(key, on) {
   if (m) m.el.classList.toggle('speaking', on);
   const slot = document.querySelector(`#slots [data-key="${CSS.escape(key)}"]`);
   if (slot) slot.classList.toggle('speaking', on);
-  if (key !== 'me') pushOverlay();
+  if (key !== 'me') { pushOverlay(); updateDuck(); }
 }
 
 /* ------------------------------------------------------------ SDP tuning */
@@ -428,21 +468,48 @@ function videoBitrates(sdp, startKbps, minKbps) {
   return lines.join('\r\n');
 }
 
-function screenSdp(sdp) {
-  sdp = preferCodecs(sdp, 'video', (name) => name === 'h264');
-  sdp = videoBitrates(sdp, SCREEN_START_KBPS, SCREEN_MIN_KBPS);
-  // Shared app sound is stereo music/game audio, not voice: give it room.
-  const m = sdp.match(/a=rtpmap:(\d+) opus\/48000/);
-  if (m) {
-    sdp = sdp.replace(new RegExp(`a=fmtp:${m[1]} ([^\\r\\n]*)`), (line, params) =>
-      /stereo=/.test(params) ? line : `a=fmtp:${m[1]} ${params};stereo=1;sprop-stereo=1;maxaveragebitrate=128000`);
-  }
-  return sdp;
+// The stream's sound is stereo music / film / game audio, not voice: Opus in
+// stereo with room to breathe (more in Video mode, where it's the soundtrack),
+// and never skipping "silence" (DTX), which would chop quiet passages. This
+// track doesn't come from a microphone, so it gets no echo cancellation,
+// automatic gain or noise suppression either: those are only on the mic.
+const STREAM_AUDIO_BPS = { game: 128_000, video: 192_000 };
+// mode: of the share this call carries. Both sides put the same numbers in
+// their half of the call setup; the sharer's encoder is also told directly
+// (see tuneSenders).
+function screenSdp(mode) {
+  const want = { stereo: 1, 'sprop-stereo': 1, maxaveragebitrate: STREAM_AUDIO_BPS[mode] || STREAM_AUDIO_BPS.game, usedtx: 0 };
+  return (sdp) => {
+    sdp = preferCodecs(sdp, 'video', (name) => name === 'h264');
+    sdp = videoBitrates(sdp, SCREEN_START_KBPS, SCREEN_MIN_KBPS);
+    const m = sdp.match(/a=rtpmap:(\d+) opus\/48000/);
+    if (!m) return sdp;
+    return sdp.replace(new RegExp(`a=fmtp:${m[1]} ([^\\r\\n]*)`), (line, params) => {
+      const kept = params.split(';').filter((kv) => kv && !(kv.split('=')[0].trim() in want));
+      return `a=fmtp:${m[1]} ${kept.concat(Object.entries(want).map(([k, v]) => `${k}=${v}`)).join(';')}`;
+    });
+  };
 }
 
 /* ------------------------------------------------------------ shared app sound */
 
-const appAudio = { supported: false, ctx: null, node: null, track: null, info: null };
+// stat: the sound buffer's last report (see app-audio-worklet.js)
+const appAudio = { supported: false, ctx: null, node: null, track: null, info: null, port: null, stat: null, direct: false };
+
+// The main process's direct line for the sound (see preload.js). It can
+// arrive before or after the audio node exists; whichever comes second
+// connects them.
+window.addEventListener('message', (e) => {
+  if (e.source !== window || !e.data || e.data.gsAppAudioPort !== true || !e.ports.length) return;
+  appAudio.port = e.ports[0];
+  feedAppAudio();
+});
+function feedAppAudio() {
+  if (!appAudio.port || !appAudio.node) return;
+  const port = appAudio.port;
+  appAudio.port = null;
+  try { appAudio.node.port.postMessage({ feed: port }, [port]); appAudio.direct = true; } catch (e) { console.warn('app audio port', e); }
+}
 
 // Why the sound helper couldn't start, in words (its own messages are technical English).
 function audioWhy(msg) {
@@ -475,7 +542,11 @@ async function startAppAudioTrack(sourceId) {
   window.gameshare.onAppAudioEnded(() => {
     if (appAudio.node === node && state.screen) toast(tr('The shared app’s sound stopped.'), 'warn');
   });
+  node.port.onmessage = (e) => { if (appAudio.node === node) appAudio.stat = { ...e.data, at: performance.now() }; };
   appAudio.node = node;
+  appAudio.stat = null;
+  appAudio.direct = false;
+  feedAppAudio();
   appAudio.track = dest.stream.getAudioTracks()[0];
   appAudio.track.contentHint = 'music';
   return appAudio.track;
@@ -484,6 +555,8 @@ async function startAppAudioTrack(sourceId) {
 function stopAppAudioTrack() {
   window.gameshare.stopAppAudio();
   if (appAudio.node) { try { appAudio.node.disconnect(); } catch { /* ignore */ } appAudio.node = null; }
+  appAudio.port = null;
+  appAudio.stat = null;
   if (appAudio.track) { appAudio.track.stop(); appAudio.track = null; }
 }
 
@@ -497,8 +570,52 @@ function applyAudio(p) {
   const t = tiles.get(p.id);
   if (t) {
     t.video.muted = !!p.tileSoundOff;
-    t.video.volume = p.streamVolume == null ? 1 : p.streamVolume;
+    t.video.volume = (p.streamVolume == null ? 1 : p.streamVolume) * duck.level;
   }
+}
+
+/* Voice over the film (Settings → Voice, off by default, only for me): while
+ * a friend I can hear is talking, every stream's sound drops to a share of
+ * its volume (prefs.duckTo, in %), and comes back when they stop. Down
+ * quickly (about 0.2 s), back up gently (about 0.6 s after a short hold), so
+ * it doesn't pump between words. */
+const duck = { level: 1, timer: null, holdUntil: 0 };
+
+function friendTalking() {
+  if (state.deafened) return false;
+  for (const p of state.peers.values()) if (p.greeted && !p.localMuted && isSpeaking(p.id)) return true;
+  return false;
+}
+
+function stepDuck() {
+  const now = performance.now();
+  const on = prefs.duck === true;
+  if (on && friendTalking()) duck.holdUntil = now + 500;
+  const target = on && now < duck.holdUntil ? clamp(prefs.duckTo, 10, 80) / 100 : 1;
+  const before = duck.level;
+  duck.level = target < before ? Math.max(target, before - 0.15) : Math.min(target, before + 0.04);
+  if (duck.level !== before) {
+    for (const [id, t] of tiles) {
+      const p = state.peers.get(id);
+      if (p && !t.isMe) t.video.volume = (p.streamVolume == null ? 1 : p.streamVolume) * duck.level;
+    }
+  } else if (target === 1) {
+    clearInterval(duck.timer);
+    duck.timer = null;
+  }
+}
+
+// Someone started or stopped talking, or the setting changed.
+function updateDuck() {
+  if (!duck.timer && (prefs.duck === true || duck.level !== 1)) duck.timer = setInterval(stepDuck, 40);
+}
+
+function updateDuckUi() {
+  $('#duckBtn').setAttribute('aria-checked', String(prefs.duck === true));
+  $('#duckRow').classList.toggle('hidden', prefs.duck !== true);
+  $('#duckSlider').value = String(prefs.duckTo);
+  $('#duckSlider').style.setProperty('--fill', `${((prefs.duckTo - 10) / 70) * 100}%`);
+  $('#duckText').textContent = tr('Streams play at {n}% of their volume while a friend talks', { n: prefs.duckTo });
 }
 
 function toggleLocalMute(id) {
@@ -519,6 +636,207 @@ function toggleDeafen() {
   updateControls();
   renderPeople();
   pushOverlay();
+}
+
+/* ------------------------------------------------------------ soundboard
+ * Short sounds you add yourself (any audio file Chromium can read). They are
+ * kept on this computer, in the app's own storage (IndexedDB), so they are
+ * still there the next time GameShare opens. Nothing is uploaded: a sound
+ * only leaves this PC as audio, while it plays.
+ *
+ * Playing one: you hear it through your speakers, and friends hear it in
+ * your voice. For as long as it plays, what's sent to each friend is your
+ * microphone mixed with the sound, swapped in on the open voice calls
+ * without reconnecting (like changing microphones) and swapped back when it
+ * ends. The rest of the time the voice path is exactly as before. A muted
+ * microphone adds silence to the mix, so sounds work while you're muted.
+ * It goes out as voice (mono, 64 kbps), so friends on any version hear it. */
+const SB_MAX_SOUNDS = 30, SB_MAX_MB = 10, SB_MAX_SECONDS = 60;
+const sb = { db: null, sounds: [], buffers: new Map(), playing: null, loaded: false };
+
+function sbDb() {
+  if (sb.db) return sb.db;
+  sb.db = new Promise((resolve, reject) => {
+    const req = indexedDB.open('gs-soundboard', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('sounds', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  sb.db.catch(() => { sb.db = null; });
+  return sb.db;
+}
+// One request against the sounds store; resolves with its result.
+async function sbStore(mode, fn) {
+  const db = await sbDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('sounds', mode);
+    const req = fn(tx.objectStore('sounds'));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function sbLoad() {
+  if (sb.loaded) return;
+  sb.loaded = true;
+  try {
+    const all = (await sbStore('readonly', (s) => s.getAll())) || [];
+    sb.sounds = all.sort((a, b) => a.added - b.added);
+  } catch (e) { console.warn('soundboard', e); sb.sounds = []; }
+  sbRender();
+}
+
+async function sbBuffer(sound) {
+  let buf = sb.buffers.get(sound.id);
+  if (!buf) {
+    buf = await ctx().decodeAudioData(sound.data.slice(0)); // (decoding empties the buffer it's given)
+    sb.buffers.set(sound.id, buf);
+  }
+  return buf;
+}
+
+async function sbAddFiles(files) {
+  let added = 0;
+  for (const f of files) {
+    const name = f.name.replace(/\.[^.]+$/, '').trim().slice(0, 40) || tr('Sound');
+    if (sb.sounds.length >= SB_MAX_SOUNDS) { toast(tr('The soundboard is full ({n} sounds). Remove one first.', { n: SB_MAX_SOUNDS }), 'warn'); break; }
+    if (f.size > SB_MAX_MB * 1024 * 1024) { toast(tr('“{name}” is too big (over {n} MB).', { name, n: SB_MAX_MB }), 'warn'); continue; }
+    let data, buf;
+    try {
+      data = await f.arrayBuffer();
+      buf = await ctx().decodeAudioData(data.slice(0));
+    } catch { toast(tr('Couldn’t read “{name}” as audio.', { name }), 'warn'); continue; }
+    if (buf.duration > SB_MAX_SECONDS) { toast(tr('“{name}” is too long (over {n} s).', { name, n: SB_MAX_SECONDS }), 'warn'); continue; }
+    const sound = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name, data, added: Date.now() };
+    try { await sbStore('readwrite', (s) => s.put(sound)); } catch (e) {
+      console.warn('soundboard save', e);
+      toast(tr('Couldn’t save the sound on this computer.'), 'err');
+      break;
+    }
+    sb.sounds.push(sound);
+    sb.buffers.set(sound.id, buf);
+    added++;
+  }
+  if (added) toast(tr(added === 1 ? '{n} sound added' : '{n} sounds added', { n: added }), 'ok');
+  sbRender();
+}
+
+async function sbRemove(id) {
+  const sound = sb.sounds.find((s) => s.id === id);
+  if (!sound) return;
+  if (sb.playing && sb.playing.id === id) sbStop();
+  try { await sbStore('readwrite', (s) => s.delete(id)); } catch (e) { console.warn('soundboard delete', e); }
+  sb.sounds = sb.sounds.filter((s) => s.id !== id);
+  sb.buffers.delete(id);
+  toast(tr('“{name}” removed', { name: sound.name }));
+  sbRender();
+}
+
+// What friends get from me on the open voice calls: `track`.
+async function sbSend(track) {
+  if (!track) return;
+  for (const p of state.peers.values()) {
+    const pc = p.voice && p.voice.peerConnection;
+    if (!pc || pc.connectionState === 'closed') continue;
+    for (const sender of pc.getSenders()) {
+      if (sender.track && sender.track.kind === 'audio' && sender.track !== track) {
+        try { await sender.replaceTrack(track); } catch (e) { console.warn('soundboard replaceTrack', e); }
+      }
+    }
+  }
+}
+
+function sbStop() {
+  const p = sb.playing;
+  if (!p) return;
+  sb.playing = null;
+  p.src.onended = null;
+  try { p.src.stop(); } catch { /* ignore */ }
+  // Back to the plain microphone, then take the mixer apart.
+  sbSend(state.mic && state.mic.getAudioTracks()[0]).finally(() => {
+    for (const n of [p.src, p.gain, p.micSrc]) { try { n && n.disconnect(); } catch { /* ignore */ } }
+    p.dest.stream.getTracks().forEach((t) => t.stop());
+  });
+  sbRender();
+}
+
+async function sbPlay(id) {
+  const again = sb.playing && sb.playing.id === id;
+  sbStop();
+  if (again) return; // clicking the sound that's playing stops it
+  const sound = sb.sounds.find((s) => s.id === id);
+  if (!sound || !state.mic || document.body.dataset.view !== 'room') return;
+  let buf;
+  try { buf = await sbBuffer(sound); } catch (e) {
+    console.warn('soundboard decode', e);
+    toast(tr('Couldn’t play that sound.'), 'err');
+    return;
+  }
+  if (sb.playing) return; // another click got here first
+  const c = ctx();
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  const gain = c.createGain();
+  gain.gain.value = clamp(prefs.sbVolume, 5, 100) / 100;
+  const dest = c.createMediaStreamDestination();
+  dest.channelCount = 1;
+  src.connect(gain);
+  gain.connect(c.destination); // for me
+  gain.connect(dest);          // for friends, with my microphone
+  let micSrc = null;
+  if (state.mic.getAudioTracks().length) {
+    try { micSrc = c.createMediaStreamSource(state.mic); micSrc.connect(dest); } catch (e) { console.warn('soundboard mic', e); }
+  }
+  const playing = { id, src, gain, dest, micSrc };
+  sb.playing = playing;
+  sbRender();
+  await sbSend(dest.stream.getAudioTracks()[0]);
+  if (sb.playing !== playing) return; // stopped meanwhile
+  src.onended = () => { if (sb.playing === playing) sbStop(); };
+  src.start();
+}
+
+function sbRender() {
+  const grid = $('#sbGrid');
+  if (!grid) return;
+  grid.replaceChildren();
+  if (!sb.sounds.length) {
+    grid.appendChild(el('p', 'sb-empty', tr('No sounds yet. Add audio files (MP3, WAV, OGG…) and they stay saved on this computer.')));
+  }
+  for (const s of sb.sounds) {
+    const b = el('button', 'sb-sound');
+    b.type = 'button';
+    b.title = s.name;
+    b.classList.toggle('playing', !!sb.playing && sb.playing.id === s.id);
+    b.appendChild(el('span', null, s.name));
+    b.addEventListener('click', () => sbPlay(s.id));
+    const x = el('span', 'sb-del', '✕');
+    x.setAttribute('role', 'button');
+    x.tabIndex = 0;
+    x.title = tr('Remove “{name}”', { name: s.name });
+    x.setAttribute('aria-label', x.title);
+    const del = (e) => { e.stopPropagation(); e.preventDefault(); sbRemove(s.id); };
+    x.addEventListener('click', del);
+    x.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') del(e); });
+    b.appendChild(x);
+    grid.appendChild(b);
+  }
+  const v = $('#sbVolume');
+  v.value = String(prefs.sbVolume);
+  v.style.setProperty('--fill', `${((prefs.sbVolume - 5) / 95) * 100}%`);
+}
+
+function openSounds() {
+  closeSettings();
+  closePersonMenu();
+  sbLoad();
+  sbRender();
+  $('#soundMenu').classList.remove('hidden');
+  $('#sbBtn').setAttribute('aria-expanded', 'true');
+}
+function closeSounds() {
+  $('#soundMenu').classList.add('hidden');
+  $('#sbBtn').setAttribute('aria-expanded', 'false');
 }
 
 /* ------------------------------------------------------------ media setup */
@@ -641,6 +959,7 @@ async function swapMic(opts = {}) {
     state.mic = fresh;
     watchLevel('me', fresh);
     refreshDevices();
+    sbStop(); // a soundboard sound was mixed with the old microphone
   })();
   try { await swapping; } finally { swapping = null; }
 }
@@ -744,7 +1063,8 @@ function broadcast(msg) {
 
 function myState() {
   return { type: 'state', name: state.name, muted: state.muted, sharing: !!state.screen, deafened: state.deafened, color: state.color,
-           movie: !!state.screen && state.movie };
+           mode: state.screen ? state.mode : null,
+           movie: !!state.screen && state.mode === 'video' }; // movie: what 1.6 understands
 }
 
 // joining: I'm not in the room yet (the host answers with a welcome even if it
@@ -765,7 +1085,7 @@ function noteSharing(p, sharing) {
     cue('share');
     attention();
   }
-  if (!sharing) p.announced = false;
+  if (!sharing) { p.announced = false; p.audioDelay = null; }
   p.sharing = sharing;
 }
 
@@ -1252,7 +1572,7 @@ function onMessage(conn, msg) {
       if (Number.isInteger(msg.color) && msg.color >= 0 && msg.color < PLAYER_COLORS.length) p.color = msg.color;
       noteSharing(p, !!msg.sharing);
       if (!p.sharing) p.hidden = false;
-      setScreenMovie(p, !!msg.sharing && !!msg.movie);
+      setScreenMode(p, msg.sharing ? modeOf(msg) : 'game');
       checkColorClash();
       renderPeople();
       break;
@@ -1291,6 +1611,15 @@ function onMessage(conn, msg) {
     case 'view': {
       p.view = { h: clamp(Number(msg.h) || 0, 0, 4320), paused: !!msg.paused };
       retuneAll();
+      break;
+    }
+    // About the screen they're sharing with me: how long its sound waits on
+    // their side before it's sent (see applyScreenBuffer).
+    case 'share-info': {
+      const d = Number(msg.audioDelay);
+      const before = audioLead(p);
+      p.audioDelay = Number.isFinite(d) && d > 0 ? Math.min(500, d) : null;
+      if (audioLead(p) !== before) applyScreenBuffer(p);
       break;
     }
     // This friend now holds the room ID for newcomers.
@@ -1364,22 +1693,32 @@ function wireDoorman(d) {
 
 /* ------------------------------------------------------------ calls */
 
+// Lip sync in Video mode. WebRTC lines sound and picture up by when each was
+// captured, but the shared app's sound reaches the sharer's GameShare a little
+// after the picture does (it waits in a small buffer, see
+// app-audio-worklet.js), so it would play that much late. The sharer says how
+// long that wait is ('share-info'), and the viewer plays the sound that much
+// sooner. Up to SYNC_LEAD_MAX only: WebRTC leaves differences under 30 ms
+// alone and would undo anything bigger.
+const SYNC_LEAD_MAX = 25;
+const audioLead = (p) => (isVideo(p) && p.audioDelay > 0 ? Math.min(SYNC_LEAD_MAX, Math.round(p.audioDelay / 5) * 5) : 0);
+
 // Video and the stream's sound share one target so they stay in sync.
 function applyScreenBuffer(p) {
   const pc = p.screenIn && p.screenIn.peerConnection;
   if (!pc) return;
+  const target = p.screenBuffer || bufferBase(p);
   for (const r of pc.getReceivers()) {
     if (r.track && 'jitterBufferTarget' in r) {
-      try { r.jitterBufferTarget = p.screenBuffer || bufferBase(p); } catch { /* ignore */ }
+      try { r.jitterBufferTarget = r.track.kind === 'audio' ? Math.max(0, target - audioLead(p)) : target; } catch { /* ignore */ }
     }
   }
 }
 
-// A friend turned movie mode on or off for their share: start over from the
-// matching cushion.
-function setScreenMovie(p, on) {
-  if (!!p.screenMovie === on) return;
-  p.screenMovie = on;
+// A friend's share changed mode: start over from the matching cushion.
+function setScreenMode(p, mode) {
+  if ((p.screenMode || 'game') === mode) return;
+  p.screenMode = mode;
   p.screenBuffer = bufferBase(p);
   p.freezePrev = null;
   applyScreenBuffer(p);
@@ -1400,10 +1739,10 @@ async function adaptScreenBuffers() {
     if (p.freezePrev == null) { p.freezePrev = freezes; p.calmSince = now; continue; }
     const before = p.screenBuffer || bufferBase(p);
     if (freezes > p.freezePrev) {
-      p.screenBuffer = Math.min(bufferMax(p), before + (p.screenMovie ? 250 : 100));
+      p.screenBuffer = Math.min(bufferMax(p), before + (isVideo(p) ? 500 : 100));
       p.calmSince = now;
     } else if (now - p.calmSince > 30000 && before > bufferBase(p)) {
-      p.screenBuffer = Math.max(bufferBase(p), before - (p.screenMovie ? 125 : 50));
+      p.screenBuffer = Math.max(bufferBase(p), before - (isVideo(p) ? 125 : 50));
       p.calmSince = now;
     }
     p.freezePrev = freezes;
@@ -1480,12 +1819,12 @@ function onIncomingCall(call) {
     p.screenIn = call;
     p.sharing = true; // a screen arriving means they're sharing (their hello may still be on its way)
     p.sentView = null; // tell this sharer our size again for the new share
-    call.answer(undefined, { sdpTransform: screenSdp }); // receive only
+    call.answer(undefined, { sdpTransform: screenSdp(modeOf(call.metadata)) }); // receive only
     const snd = call.metadata && call.metadata.sound;
     p.screenSound = snd && typeof snd === 'object'
       ? { sound: String(snd.sound || 'none'), app: snd.app ? String(snd.app).slice(0, 60) : null }
       : null; // null = friend runs an older GameShare that doesn't say
-    p.screenMovie = !!(call.metadata && call.metadata.movie);
+    p.screenMode = modeOf(call.metadata);
     p.screenBuffer = bufferBase(p);
     p.freezePrev = null;
     call.on('stream', (remote) => {
@@ -1529,10 +1868,11 @@ function watchIce(call) {
 function sendScreenTo(p) {
   if (!state.screen || !state.peer || state.peer.disconnected) return;
   if (p.screenOut) { const old = p.screenOut; p.screenOut = null; try { old.close(); } catch { /* ignore */ } }
-  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, movie: state.movie }, sdpTransform: screenSdp });
+  const call = state.peer.call(p.id, state.screen, { metadata: { kind: 'screen', sound: state.screenSound, mode: state.mode, movie: state.mode === 'video' }, sdpTransform: screenSdp(state.mode) });
   if (!call) return;
   call.gsAt = performance.now();
   p.screenOut = call;
+  p.infoSig = null; // tell this viewer about the share again (see watchShare)
   const pc = call.peerConnection;
   if (pc) {
     pc.addEventListener('connectionstatechange', () => { if (pc.connectionState === 'connected') retuneAll(); });
@@ -1560,7 +1900,12 @@ async function tuneSenders(pc, p) {
     active,
     scale: Math.round(scale * 100) / 100,
     bitrate: Math.round(Math.max(MIN_VIEWER_BITRATE, Math.min(rate / Math.pow(scale, 1.5), slice))),
-    fps: q.fps
+    fps: q.fps,
+    // Busy PC or connection: keep the frame rate and let the picture soften.
+    // Except in Video mode while the picture stands still (a paused film, a
+    // menu): then sharpness is all that matters, so small text and subtitles
+    // stay readable (see watchShare).
+    pref: share.still ? 'maintain-resolution' : 'maintain-framerate'
   };
   const sig = JSON.stringify(want);
   if (p) p.encWant = want;
@@ -1570,7 +1915,7 @@ async function tuneSenders(pc, p) {
     if (!sender.track || sender.track.kind !== 'video') continue;
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.degradationPreference = 'maintain-framerate';
+    params.degradationPreference = want.pref;
     const enc = params.encodings[0];
     enc.active = want.active;
     enc.scaleResolutionDownBy = want.scale;
@@ -1579,6 +1924,15 @@ async function tuneSenders(pc, p) {
     enc.priority = 'low';
     enc.networkPriority = 'low';
     try { await sender.setParameters(params); } catch (e) { console.warn('setParameters', e); if (p) p.encSig = null; }
+  }
+  // The stream's sound: the mode's bitrate.
+  for (const sender of pc.getSenders()) {
+    if (!sender.track || sender.track.kind !== 'audio') continue;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) continue;
+    if (params.encodings[0].maxBitrate === STREAM_AUDIO_BPS[state.mode]) continue;
+    params.encodings[0].maxBitrate = STREAM_AUDIO_BPS[state.mode];
+    try { await sender.setParameters(params); } catch (e) { console.warn('stream sound params', e); }
   }
 }
 
@@ -1630,7 +1984,7 @@ function stuckStep(w, s, now) {
 }
 
 // Drop a stuck shrink in place: a moment of "keep the resolution", then back.
-async function nudgeEncoder(pc) {
+async function nudgeEncoder(pc, p) {
   const set = async (pref) => {
     for (const sender of pc.getSenders()) {
       if (!sender.track || sender.track.kind !== 'video') continue;
@@ -1642,7 +1996,124 @@ async function nudgeEncoder(pc) {
   };
   await set('maintain-resolution');
   await new Promise((r) => setTimeout(r, 1500));
-  if (pc.connectionState === 'connected') await set('maintain-framerate');
+  if (pc.connectionState === 'connected') await set((p && p.encWant && p.encWant.pref) || 'maintain-framerate');
+}
+
+/* Watching my own share (every few seconds, while sharing):
+ *  - how many frames a second the capture delivers (for Stats). Nothing is
+ *    added on top: the encoder gets the capture's frames, up to the quality
+ *    preset's frame rate, and a frame that repeats the last one costs next
+ *    to nothing;
+ *  - in Video mode, whether the picture stands still (a paused film): the
+ *    encoder then needs almost no bitrate, which is how it's noticed. While
+ *    it does, the encoder is told to keep the picture sharp instead of the
+ *    frame rate (see tuneSenders), and back once it moves again;
+ *  - a browser window that stays black while its sound plays: a streaming
+ *    site's copy protection, most likely. Say so once (see checkBlackShare);
+ *  - how long the app's sound waits before it's sent, for the viewers' lip
+ *    sync (see applyScreenBuffer). */
+const share = { srcFps: null, lastSrc: null, still: false, probe: null, canvas: null, blackFor: 0, blackAt: 0, hinted: false, loudAt: 0 };
+const STILL_BELOW_KBPS = 150, MOVING_ABOVE_KBPS = 400;
+
+function resetShareWatch() {
+  if (share.probe) { share.probe.srcObject = null; share.probe = null; }
+  Object.assign(share, { srcFps: null, lastSrc: null, still: false, blackFor: 0, blackAt: 0, hinted: false, loudAt: 0 });
+  closeNotice('drm');
+}
+
+async function watchShare() {
+  if (!state.screen) return;
+  const stream = state.screen;
+  // One viewer's connection is enough: they all get the same capture.
+  let src = null;
+  for (const p of state.peers.values()) {
+    const call = p.screenOut;
+    const pc = call && call.peerConnection;
+    if (!pc || pc.connectionState !== 'connected' || (p.encWant && !p.encWant.active)) continue;
+    let frames = null, out = null;
+    try {
+      (await pc.getStats()).forEach((r) => {
+        if (r.type === 'media-source' && r.kind === 'video') frames = r.frames || 0;
+        if (r.type === 'outbound-rtp' && r.kind === 'video') out = r;
+      });
+    } catch { /* ignore */ }
+    if (frames != null && out) { src = { call, frames, bytes: out.bytesSent || 0, t: out.timestamp, held: out.qualityLimitationReason === 'bandwidth' }; break; }
+  }
+  if (state.screen !== stream) return;
+  const last = share.lastSrc;
+  share.lastSrc = src;
+  const dt = src && last && last.call === src.call ? src.t - last.t : 0;
+  share.srcFps = dt > 1000 && src.frames >= last.frames ? ((src.frames - last.frames) * 1000) / dt : null;
+  const kbps = dt > 1000 && src.bytes >= last.bytes ? ((src.bytes - last.bytes) * 8) / dt : null;
+  if (state.mode === 'video' && kbps != null) {
+    // (a starved connection also sends little: that's not a paused film)
+    const still = share.still ? kbps < MOVING_ABOVE_KBPS : kbps < STILL_BELOW_KBPS && !src.held;
+    if (still !== share.still) { share.still = still; retuneAll(); }
+  } else if (kbps == null && share.still) { share.still = false; retuneAll(); }
+  checkBlackShare();
+  // Tell each viewer how long the sound waits here (when it changed by 5 ms or more).
+  const st = appAudio.stat;
+  const fresh = st && st.delayMs != null && performance.now() - st.at < 5000;
+  if (st && st.peak > 0.003) share.loudAt = performance.now();
+  const audioDelay = fresh && stream.getAudioTracks().length ? Math.round(st.delayMs / 5) * 5 : null;
+  // (only once their screen call is up: the message travels faster than the call)
+  for (const p of state.peers.values()) {
+    const pc = p.screenOut && p.screenOut.peerConnection;
+    if (!pc || pc.connectionState !== 'connected' || p.lost) continue;
+    const sig = String(audioDelay);
+    if (p.infoSig === sig) continue;
+    p.infoSig = sig;
+    send(p, { type: 'share-info', audioDelay });
+  }
+}
+
+// A copy-protected video (Netflix, Prime Video, Disney+…) reaches screen
+// capture as plain black. GameShare doesn't get around that; it only tells
+// the sharer what's going on and which browser setting usually helps.
+// Black = at least 80% of the picture pure black (the browser's own bars may
+// still show), for a few checks in a row, in a browser window, while its
+// sound is playing (when the sound is shared at all).
+function isBrowserShare() {
+  const app = (state.screenSound && state.screenSound.app) || '';
+  return BROWSER_RE.test(state.shareName || '') || /^(chrome|msedge|firefox|opera|brave|vivaldi|chromium)(\.exe)?$/i.test(app);
+}
+
+function blackFraction(video) {
+  if (!video || !video.videoWidth) return null;
+  if (!share.canvas) { share.canvas = document.createElement('canvas'); share.canvas.width = 48; share.canvas.height = 27; }
+  const g = share.canvas.getContext('2d', { willReadFrequently: true });
+  try { g.drawImage(video, 0, 0, 48, 27); } catch { return null; }
+  const d = g.getImageData(0, 0, 48, 27).data;
+  let black = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] <= 3 && d[i + 1] <= 3 && d[i + 2] <= 3) black++;
+  return black / (d.length / 4);
+}
+
+function checkBlackShare() {
+  if (share.hinted || !state.screen || !isBrowserShare()) return;
+  // My preview shows the capture; if I closed it, a hidden video does.
+  const mine = tiles.get('me');
+  if (!mine && !share.probe) {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.srcObject = new MediaStream(state.screen.getVideoTracks());
+    v.play().catch(() => {});
+    share.probe = v;
+    return; // first picture by the next check
+  }
+  if (mine && share.probe) { share.probe.srcObject = null; share.probe = null; }
+  const f = blackFraction(mine ? mine.video : share.probe);
+  const now = performance.now();
+  const hasSound = state.screen.getAudioTracks().length > 0;
+  const playing = !hasSound || now - share.loudAt < 4000;
+  if (f == null || f < 0.8 || !playing) { share.blackFor = 0; share.blackAt = now; return; }
+  share.blackFor += now - (share.blackAt || now);
+  share.blackAt = now;
+  if (share.blackFor < 5000) return;
+  share.hinted = true;
+  note('my shared browser window is black: showed the protected-video hint');
+  showNotice('drm', tr('Your shared window looks black'),
+    tr('Streaming sites like Netflix, Prime Video and Disney+ protect their video, so a screen capture gets a black picture. What usually brings it back: in that browser’s settings, turn off “Use graphics acceleration when available” (hardware acceleration) and restart the browser. GameShare doesn’t get around the protection: if it stays black, that site can’t be shared.'));
 }
 
 async function checkStuckShares() {
@@ -1678,7 +2149,7 @@ async function checkStuckShares() {
     const why = `stuck at ${out.frameHeight}p (wanted ${wantH}p, using ${Math.round(used * 100)}% of its bitrate, limit: ${out.qualityLimitationReason || '?'}) on a healthy link`;
     if (v === 'nudge') {
       note(`my screen to ${p.name} ${why}: nudging the encoder`);
-      nudgeEncoder(pc);
+      nudgeEncoder(pc, p);
     } else if (v === 'reopen') {
       note(`my screen to ${p.name} ${why} again: reopening it`);
       sendScreenTo(p);
@@ -1688,20 +2159,22 @@ async function checkStuckShares() {
   }
 }
 
+// Video mode for my share (or, while not sharing, the mode the picker remembers).
+const videoShare = () => (state.screen ? state.mode : prefs.shareMode) === 'video';
+const autoBitrate = () => QUALITY[state.quality].bitrate * (videoShare() ? VIDEO_BITRATE_BOOST : 1);
 // The most one friend can get from my screen (bits/s) before it's sized to
 // how big they watch it: the bitrate picked in Settings, or the preset's.
 function shareBitrate() {
   const kbps = Number(prefs.bitrate);
   if (BITRATES.includes(kbps)) return kbps * 1000;
-  return QUALITY[state.quality].bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
+  return autoBitrate();
 }
 
 // Settings → Bitrate: the Automatic choice says what it currently means.
 function updateBitrateUi() {
   const sel = $('#bitrateSelect');
   if (!sel) return;
-  const auto = QUALITY[state.quality].bitrate * (state.movie ? MOVIE_BITRATE_BOOST : 1);
-  const mbps = (auto / 1e6).toLocaleString(i18n.current() === 'pt' ? 'pt-BR' : 'en', { maximumFractionDigits: 2 });
+  const mbps = (autoBitrate() / 1e6).toLocaleString(i18n.current() === 'pt' ? 'pt-BR' : 'en', { maximumFractionDigits: 2 });
   sel.querySelector('option[value="auto"]').textContent = tr('Automatic ({n} Mbps)', { n: mbps });
   sel.value = String(prefs.bitrate);
 }
@@ -1735,6 +2208,8 @@ async function startShare() {
   await applyCaptureQuality(track);
   track.addEventListener('ended', stopShare);
 
+  state.mode = pick.mode === 'video' ? 'video' : 'game';
+  state.shareName = pick.name || '';
   state.screenSound = { sound: 'none' };
   if (pick.audio) {
     try {
@@ -1748,6 +2223,7 @@ async function startShare() {
   }
 
   state.screen = stream;
+  updateBitrateUi();
   addTile('me', stream, true);
   state.previewHidden = false;
   // (friends who are reconnecting get it once they're back)
@@ -1774,6 +2250,9 @@ function stopShare() {
   stopAppAudioTrack();
   state.screen.getTracks().forEach((t) => t.stop());
   state.screen = null;
+  state.mode = 'game';
+  resetShareWatch();
+  updateBitrateUi();
   state.previewHidden = false;
   for (const p of state.peers.values()) {
     p.unwatched = false;
@@ -1795,7 +2274,30 @@ let pickerResolve = null;
 let pickerSources = [];
 let pickerKind = 'window';
 let pickerSelected = null;
+let pickerMode = 'game';
 let thumbRound = 0;
+
+// Game or Video: the sharer's choice, remembered. For a browser or a video
+// player the picker only suggests Video.
+function setShareMode(mode) {
+  pickerMode = mode === 'video' ? 'video' : 'game';
+  renderShareMode();
+}
+
+function renderShareMode() {
+  document.querySelectorAll('#picker .mode').forEach((b) => {
+    const on = b.dataset.mode === pickerMode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+  $('#modeText').textContent = pickerMode === 'video'
+    ? tr('For films and videos: steady picture, richer sound. Friends see it about 1 s late.')
+    : tr('For playing: the lowest delay.');
+  const src = pickerSources.find((s) => s.id === pickerSelected);
+  const suggest = pickerMode === 'game' && !!src && src.kind === 'window' && looksLikeVideo(src.name);
+  $('#modeSuggest').classList.toggle('hidden', !suggest);
+  $('#modeSuggest').textContent = tr('Watching a video? Use Video mode');
+}
 
 async function openPicker() {
   const modal = $('#picker');
@@ -1803,6 +2305,8 @@ async function openPicker() {
   $('#audioCheck').checked = !!prefs.shareSound;
   $('#pickerGo').disabled = true;
   pickerSelected = null;
+  pickerSources = [];
+  setShareMode(prefs.shareMode);
   modal.classList.remove('hidden');
 
   const done = new Promise((resolve) => { pickerResolve = resolve; });
@@ -1831,6 +2335,7 @@ async function loadSources() {
   if (pickerSelected && !pickerSources.some((s) => s.id === pickerSelected)) pickerSelected = null;
   $('#pickerGo').disabled = !pickerSelected;
   renderSources();
+  renderShareMode();
 
   try {
     const withThumbs = await window.gameshare.listSources({ thumbs: true });
@@ -1897,6 +2402,7 @@ function renderSources() {
       $('#pickerGo').disabled = false;
       grid.querySelectorAll('.source').forEach((x) => x.classList.remove('selected'));
       b.classList.add('selected');
+      renderShareMode();
     });
     b.addEventListener('dblclick', () => { pickerSelected = s.id; goPicker(); });
     grid.appendChild(b);
@@ -1907,9 +2413,12 @@ function renderSources() {
 
 function goPicker() {
   if (!pickerSelected) return;
+  const src = pickerSources.find((s) => s.id === pickerSelected);
   prefs.lastSource = pickerSelected;
+  prefs.shareMode = pickerMode;
   savePrefs();
-  closePicker({ id: pickerSelected, audio: $('#audioCheck').checked && appAudio.supported });
+  closePicker({ id: pickerSelected, audio: $('#audioCheck').checked && appAudio.supported, mode: pickerMode,
+                name: src ? src.name : '', kind: src ? src.kind : 'window' });
 }
 
 /* ------------------------------------------------------------ stage tiles */
@@ -2001,6 +2510,13 @@ function addTile(id, stream, isMe) {
   stats.setAttribute('aria-pressed', String(!!prefs.stats));
   stats.addEventListener('click', () => setStats(!prefs.stats));
   tools.appendChild(stats);
+  // Cinema mode, on friends' screens: this screen fills the window, the rest hides.
+  let cine = null;
+  if (!isMe) {
+    cine = el('button', 'tile-btn cinema-btn');
+    cine.addEventListener('click', () => toggleCinema(id));
+    tools.appendChild(cine);
+  }
   const full = el('button', 'tile-btn icon full-btn');
   full.addEventListener('click', () => toggleFullscreen(tile));
   tools.appendChild(full);
@@ -2035,6 +2551,12 @@ function addTile(id, stream, isMe) {
       sync();
     }
     if (stop) stop.textContent = tr('Stop');
+    if (cine) {
+      const on = state.cinema === id;
+      cine.textContent = tr('Cinema');
+      cine.setAttribute('aria-pressed', String(on));
+      cine.title = on ? tr('Leave cinema mode (Esc or Ctrl+Shift+C)') : tr('Cinema mode: only this screen, as big as the window (Ctrl+Shift+C)');
+    }
     stats.textContent = tr('Stats');
     stats.title = isMe ? tr('Show what each friend is getting from you') : tr('Show stream numbers: resolution, frame rate, bitrate, delay');
     const fullOn = document.fullscreenElement === tile;
@@ -2045,7 +2567,7 @@ function addTile(id, stream, isMe) {
     if (stallText) stallText.textContent = tr('Reconnecting…');
   };
   relabel();
-  tile.addEventListener('click', () => { if (!document.fullscreenElement) toggleFocus(id); });
+  tile.addEventListener('click', () => { if (!document.fullscreenElement && !state.cinema) toggleFocus(id); });
   tile.addEventListener('dblclick', () => toggleFullscreen(tile));
   // In full screen, controls and cursor hide after a moment without movement.
   // call: the screen call this picture comes from (a newer one = this one is stale).
@@ -2053,6 +2575,7 @@ function addTile(id, stream, isMe) {
   tile.addEventListener('mousemove', () => wake(entry));
 
   if (prevStyle) tile.setAttribute('style', prevStyle);
+  if (state.cinema === id) tile.classList.add('cinema-tile'); // rebuilt (a track was added): still in cinema mode
   if (isSpeaking(isMe ? 'me' : id)) tile.classList.add('speaking');
   // Friends' screens first in the page, mine last.
   const mine = tiles.get('me');
@@ -2066,10 +2589,50 @@ function addTile(id, stream, isMe) {
 }
 
 function wake(entry) {
-  if (document.fullscreenElement !== entry.tile) return;
+  if (document.fullscreenElement !== entry.tile && !entry.tile.classList.contains('cinema-tile')) return;
   entry.tile.classList.add('awake');
   clearTimeout(entry.idle);
   entry.idle = setTimeout(() => entry.tile.classList.remove('awake'), 2500);
+}
+
+/* Cinema mode (Ctrl+Shift+C, or the Cinema button on a friend's screen): that
+ * screen fills the GameShare window and everything else hides (the panel,
+ * other screens, and after a moment the controls and the pointer). Voices
+ * keep working. It also asks the sharer for the full picture whatever the
+ * window's size, so small text and subtitles get every pixel there is.
+ * Esc leaves. Full screen still works on top of it. */
+function cinemaPick() {
+  const stage = $('#stage');
+  const friends = [...tiles.keys()].filter((id) => id !== 'me');
+  if (!friends.length) return null;
+  if (friends.includes(stage.dataset.focus)) return stage.dataset.focus; // the one I made big
+  return friends.find((id) => isVideo(state.peers.get(id) || {})) || friends[0];
+}
+
+function setCinema(id) {
+  const next = id && tiles.has(id) && id !== 'me' ? id : null;
+  if (next === state.cinema) return;
+  const prev = tiles.get(state.cinema);
+  if (prev) { prev.tile.classList.remove('cinema-tile', 'awake'); clearTimeout(prev.idle); }
+  state.cinema = next;
+  document.body.classList.toggle('cinema', !!next);
+  const t = tiles.get(next);
+  if (t) { t.tile.classList.add('cinema-tile'); wake(t); }
+  for (const x of tiles.values()) x.relabel();
+  reportViews(); // cinema wants the full resolution
+  layoutStage();
+}
+
+function toggleCinema(id) {
+  if (state.cinema && (!id || id === state.cinema)) { setCinema(null); return; }
+  const pick = id || cinemaPick();
+  if (!pick) { toast(tr('Cinema mode needs a friend’s screen to watch.')); return; }
+  setCinema(pick);
+  if (!prefs.cinemaTip) {
+    prefs.cinemaTip = true;
+    savePrefs();
+    toast(tr('Cinema mode. Press Esc or Ctrl+Shift+C to leave.'));
+  }
 }
 
 function toggleFullscreen(tile) {
@@ -2152,6 +2715,7 @@ function removeTile(id, { keepLayout = false } = {}) {
     tiles.delete(id);
   }
   if (!keepLayout) {
+    if (state.cinema === id) setCinema(null); // the screen I was watching is gone
     if ($('#stage').dataset.focus === id) delete $('#stage').dataset.focus;
     layoutStage();
   }
@@ -2298,6 +2862,7 @@ function wantedView(id) {
   const t = tiles.get(id);
   if (!t) return null;
   if (!state.windowVisible) return { h: 0, paused: true };
+  if (state.cinema === id) return { h: VIEW_STEPS[VIEW_STEPS.length - 1], paused: false }; // every pixel there is
   const px = t.tile.clientHeight * (window.devicePixelRatio || 1);
   const h = VIEW_STEPS.find((s) => s >= px * 0.9) || VIEW_STEPS[VIEW_STEPS.length - 1];
   return { h, paused: false };
@@ -2680,10 +3245,11 @@ async function callStats(call, dir) {
   let st;
   try { st = await pc.getStats(); } catch { return null; }
   const byId = new Map();
-  let rtp = null, pairId = null;
+  let rtp = null, pairId = null, snd = null;
   st.forEach((r) => {
     byId.set(r.id, r);
     if (r.type === (dir === 'in' ? 'inbound-rtp' : 'outbound-rtp') && r.kind === 'video') rtp = r;
+    if (r.type === (dir === 'in' ? 'inbound-rtp' : 'outbound-rtp') && r.kind === 'audio') snd = r;
     if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
   });
   if (!rtp) return { state: pc.connectionState };
@@ -2693,8 +3259,9 @@ async function callStats(call, dir) {
   const now = performance.now();
   const bytes = dir === 'in' ? rtp.bytesReceived : rtp.bytesSent;
   const prev = lastSample.get(call);
+  const sndBytes = snd ? (dir === 'in' ? snd.bytesReceived : snd.bytesSent) || 0 : null;
   lastSample.set(call, { t: now, bytes, lost: rtp.packetsLost || 0, recv: rtp.packetsReceived || 0,
-                         delay: rtp.jitterBufferDelay || 0, emitted: rtp.jitterBufferEmittedCount || 0 });
+                         delay: rtp.jitterBufferDelay || 0, emitted: rtp.jitterBufferEmittedCount || 0, sndBytes });
   const dt = prev ? (now - prev.t) / 1000 : 0;
   const s = {
     state: pc.connectionState,
@@ -2702,7 +3269,9 @@ async function callStats(call, dir) {
     kbps: dt > 0.2 ? Math.max(0, Math.round(((bytes - prev.bytes) * 8) / dt / 1000)) : null,
     codec: codec && codec.mimeType ? codec.mimeType.split('/')[1] : '',
     rtt: pair && pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
-    relay: !!pair && (cand(pair.localCandidateId).candidateType === 'relay' || cand(pair.remoteCandidateId).candidateType === 'relay')
+    relay: !!pair && (cand(pair.localCandidateId).candidateType === 'relay' || cand(pair.remoteCandidateId).candidateType === 'relay'),
+    // the stream's sound (null: this share has none)
+    sndKbps: snd && dt > 0.2 && prev.sndBytes != null ? Math.max(0, Math.round(((sndBytes - prev.sndBytes) * 8) / dt / 1000)) : null
   };
   if (dir === 'in') {
     const lost = prev ? rtp.packetsLost - prev.lost : 0, got = prev ? rtp.packetsReceived - prev.recv : 0;
@@ -2710,6 +3279,11 @@ async function callStats(call, dir) {
     const emitted = prev ? rtp.jitterBufferEmittedCount - prev.emitted : 0;
     s.buffer = emitted > 0 ? Math.round(((rtp.jitterBufferDelay - prev.delay) / emitted) * 1000) : null;
     s.freezes = rtp.freezeCount || 0;
+    // Lip sync: both tracks say which moment of the sharer's clock they are
+    // playing right now. Positive = the sound is ahead of the picture.
+    // (As WebRTC sees it; avSync() adds what the sharer reported.)
+    s.sndAhead = snd && snd.estimatedPlayoutTimestamp && rtp.estimatedPlayoutTimestamp
+      ? Math.round(snd.estimatedPlayoutTimestamp - rtp.estimatedPlayoutTimestamp) : null;
     s.impl = rtp.decoderImplementation || '';
     s.hw = rtp.powerEfficientDecoder;
   } else {
@@ -2726,17 +3300,48 @@ const mbps = (kbps) => (kbps == null ? '…' : kbps >= 1000 ? `${(kbps / 1000).t
 const coder = (s, what, L = tr) => (s.hw == null ? (s.impl || '')
   : L(s.hw ? `hardware ${what}` : `software ${what}`) + (s.impl ? ` (${s.impl})` : ''));
 
+// How far the stream's sound is from its picture for me, in ms (positive =
+// the sound comes late), or null if unknown. What WebRTC measures between the
+// two tracks, plus the wait on the sharer's side that WebRTC can't see.
+function avSync(s, p) {
+  if (!s || s.sndAhead == null) return null;
+  return Math.round((p && p.audioDelay) || 0) - s.sndAhead;
+}
+function avSyncText(ms, L = tr) {
+  if (ms == null) return '';
+  if (Math.abs(ms) < 10) return L('sound in sync');
+  return ms > 0 ? L('sound {n} ms late', { n: ms }) : L('sound {n} ms early', { n: -ms });
+}
+
 // compact: for small screens (a strip thumbnail, your own preview).
-function describeIn(s, compact, L = tr) {
+// p: the friend whose screen it is (for the mode and the lip-sync line).
+function describeIn(s, compact, L = tr, p = null) {
   if (!s || !s.w) return s && s.state !== 'connected' ? L('not connected ({state})', { state: s.state }) : L('waiting for video…');
   const freezes = L(s.freezes === 1 ? '{n} freeze' : '{n} freezes', { n: s.freezes });
-  if (compact) return `${s.h}p · ${s.fps} fps · ${mbps(s.kbps)}\n${s.buffer != null ? `${L('{n} ms buffer', { n: s.buffer })} · ` : ''}${freezes}`;
+  const mode = p ? L(isVideo(p) ? 'Video mode' : 'Game mode') : '';
+  if (compact) return `${s.h}p · ${s.fps} fps · ${mbps(s.kbps)}\n${s.buffer != null ? `${L('{n} ms buffer', { n: s.buffer })} · ` : ''}${freezes}${p && isVideo(p) ? ` · ${L('video')}` : ''}`;
+  const target = p && p.screenBuffer ? ` (${L('aims for {n} ms', { n: p.screenBuffer })})` : '';
   return [
     `${s.w}×${s.h} · ${s.fps} fps · ${mbps(s.kbps)}`,
     [s.codec, coder(s, 'decoding', L)].filter(Boolean).join(' · '),
-    `${s.buffer != null ? `${L('buffer {n} ms', { n: s.buffer })} · ` : ''}${freezes} · ${L('{n}% lost', { n: s.loss.toFixed(1) })}`,
+    `${s.buffer != null ? `${L('buffer {n} ms', { n: s.buffer })}${target} · ` : ''}${freezes} · ${L('{n}% lost', { n: s.loss.toFixed(1) })}`,
+    [mode, s.sndKbps != null ? L('sound {n} kbps', { n: s.sndKbps }) : '', avSyncText(avSync(s, p), L)].filter(Boolean).join(' · '),
     `${s.relay ? L('via relay server') : L('direct')}${s.rtt != null ? ` · ping ${s.rtt} ms` : ''}`
-  ].join('\n');
+  ].filter(Boolean).join('\n');
+}
+
+// My own share, for my preview's stats and the report: mode, the frame rate
+// the shared window really produces, and the sound's bitrate and wait.
+function describeShare(sndKbps, compact, L = tr) {
+  const st = appAudio.stat;
+  const hasSound = !!state.screen && state.screen.getAudioTracks().length > 0;
+  if (compact) return state.mode === 'video' ? L('Video mode') : '';
+  return [
+    L(state.mode === 'video' ? 'Video mode' : 'Game mode'),
+    share.srcFps != null ? L('source {n} fps', { n: Math.round(share.srcFps) }) + (share.still ? ` (${L('still: keeping it sharp')})` : '') : '',
+    hasSound && sndKbps != null ? L('sound {n} kbps', { n: sndKbps }) : '',
+    hasSound && st && st.delayMs != null ? L('sound waits {n} ms', { n: Math.round(st.delayMs) }) : ''
+  ].filter(Boolean).join(' · ');
 }
 
 function describeOut(name, s, p, compact, L = tr) {
@@ -2769,18 +3374,19 @@ async function updateStats() {
     let text;
     if (t.isMe) {
       const lines = [];
-      let enc = '';
+      let enc = '', sndKbps = null;
       for (const p of state.peers.values()) {
         if (!p.greeted || !p.screenOut) continue;
         const s = await callStats(p.screenOut, 'out');
+        if (s && s.sndKbps != null) sndKbps = s.sndKbps;
         lines.push(describeOut(p.name, s, p, compact));
         if (s && s.impl && !enc) enc = compact ? (s.hw == null ? '' : tr(s.hw ? 'hardware encoding' : 'software encoding')) : coder(s, 'encoding');
       }
-      text = lines.length ? [...lines, enc, state.movie ? tr('movie mode') : ''].filter(Boolean).join('\n') : tr('Nobody is watching yet');
+      text = lines.length ? [...lines, enc, describeShare(sndKbps, compact)].filter(Boolean).join('\n')
+        : [tr('Nobody is watching yet'), describeShare(null, compact)].filter(Boolean).join('\n');
     } else {
       const p = state.peers.get(id);
-      text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact) : tr('reconnecting…');
-      if (p && p.screenIn && p.screenMovie) text += compact ? ` · ${tr('movie')}` : `\n${tr('movie mode')}`;
+      text = p && p.screenIn ? describeIn(await callStats(p.screenIn, 'in'), compact, tr, p) : tr('reconnecting…');
     }
     if (box.textContent !== text) box.textContent = text;
   }
@@ -2823,18 +3429,22 @@ async function diagnostics() {
     L.push(`Room ${state.code}: ${greetedCount()}/${state.maxPeople} players · host: ${holderName()}`);
     L.push(`Me (${state.name}): ${state.muted ? 'muted' : 'mic on'}${state.micReal ? '' : ' (no microphone found)'} · ${state.deafened ? 'voices muted' : 'hearing voices'} · ${state.screen ? 'sharing' : 'not sharing'}`);
   }
-  L.push(`Settings: quality ${state.quality} · bitrate ${prefs.bitrate === 'auto' ? 'auto' : prefs.bitrate + ' kbps'} (${Math.round(shareBitrate() / 1000)} kbps per friend) · movie mode ${state.movie ? 'on' : 'off'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
+  L.push(`Settings: quality ${state.quality} · bitrate ${prefs.bitrate === 'auto' ? 'auto' : prefs.bitrate + ' kbps'} (${Math.round(shareBitrate() / 1000)} kbps per friend) · sharing mode ${state.screen ? state.mode : prefs.shareMode + ' (not sharing)'} · headphones mode ${state.headphones ? 'on' : 'off'} · noise removal ${prefs.noiseRemoval === false ? 'off' : mic.failed ? 'failed, using the standard filter' : 'on'} · overlay ${prefs.overlay ? 'on' : 'off'} · in-game shortcuts ${prefs.globalKeys === false ? 'off' : 'on'}`);
   L.push(`Devices: microphone "${sel('#micSelect')}" · output "${sel('#outSelect')}"`);
+  if (state.screen) {
+    const st = appAudio.stat;
+    L.push(`My share: ${describeShare(null, false, trEn)}${st ? ` · sound buffer: reserve ${Math.round(st.marginMs)} ms, ran dry ${st.dry}× in the last second${appAudio.direct ? '' : ' · sound through the page (no direct line)'}` : ''}`);
+  }
   for (const p of state.peers.values()) {
     if (!p.greeted) continue;
     L.push('');
     L.push(`${p.name} (GameShare ${p.version || 'older than 1.2'}): ${p.lost ? `RECONNECTING for ${Math.round((performance.now() - p.lost) / 1000)} s` : 'connected'} · ${netText(p.net, trEn)}`);
     L.push(`  link ${health(p.conn)} · voice ${health(p.voice)}${p.localMuted ? ' (muted by me)' : ''}${p.muted ? ' · their mic is off' : ''}`);
-    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn).replace(/\n/g, ' · ') + (p.screenBuffer ? ` · target buffer ${p.screenBuffer} ms` : '') + (p.screenMovie ? ' · movie mode' : ''));
+    if (p.screenIn) L.push('  their screen: ' + describeIn(await callStats(p.screenIn, 'in'), false, trEn, p).replace(/\n/g, ' · ') + (p.audioDelay ? ` · their sound waits ${Math.round(p.audioDelay)} ms, played ${audioLead(p)} ms sooner` : ''));
     else if (p.sharing) L.push(`  their screen: ${p.hidden ? 'closed by me' : 'not received'}`);
     if (p.screenOut) {
       const s = await callStats(p.screenOut, 'out');
-      L.push('  my screen to them: ' + describeOut('', s, p, false, trEn).replace(/^: /, '') + (s && s.impl ? ` · ${coder(s, 'encoding', trEn)}` : ''));
+      L.push('  my screen to them: ' + describeOut('', s, p, false, trEn).replace(/^: /, '') + (s && s.impl ? ` · ${coder(s, 'encoding', trEn)}` : '') + (s && s.sndKbps != null ? ` · sound ${s.sndKbps} kbps` : ''));
     }
   }
   if (diagLog.length) {
@@ -2885,6 +3495,7 @@ async function pollNet() {
   }
   await adaptScreenBuffers();
   await checkStuckShares();
+  await watchShare();
   if (document.body.dataset.view === 'room') renderPeople();
 }
 
@@ -2900,7 +3511,7 @@ function updateControls() {
   micBtn.title = state.muted ? tr('Unmute your mic (Ctrl+Shift+M)') : tr('Mute your mic (Ctrl+Shift+M)');
   deafBtn.title = state.deafened ? tr('Hear everyone’s voice again (Ctrl+Shift+D)') : tr('Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)');
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
-  $('#movieBtn').setAttribute('aria-checked', String(state.movie));
+  updateDuckUi();
   updateBitrateUi();
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
   $('#globalKeysBtn').setAttribute('aria-checked', String(prefs.globalKeys !== false));
@@ -2935,7 +3546,8 @@ function setLanguage(pref) {
   }
   refreshDevices();
   renderUpdate();
-  if (!$('#picker').classList.contains('hidden')) renderSources();
+  if (!$('#picker').classList.contains('hidden')) { renderSources(); renderShareMode(); }
+  sbRender();
   if (prefs.stats) updateStats();
   pushOverlay();
 }
@@ -3196,6 +3808,8 @@ function leave(silent = false) {
   if (prefs.inRoom) { prefs.inRoom = false; savePrefs(); }
   window.gameshare.inRoom(false);
   if (state.screen) stopShare();
+  sbStop();
+  closeSounds();
   if (sayBye) broadcast({ type: 'bye' });
   for (const id of [...state.peers.keys()]) removePeer(id);
   for (const c of dialing.values()) { try { c.close(); } catch { /* ignore */ } }
@@ -3270,6 +3884,7 @@ function applyGlobalKeys() {
 
 function openSettings() {
   closePersonMenu();
+  closeSounds();
   updateSizeControls();
   refreshDevices();
   micMeterOn = true;
@@ -3532,6 +4147,26 @@ function init() {
   });
   $('#settingsMenu').addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', closeSettings);
+
+  // Soundboard
+  $('#sbBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if ($('#soundMenu').classList.contains('hidden')) openSounds(); else closeSounds();
+  });
+  $('#soundMenu').addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', closeSounds);
+  $('#sbAdd').addEventListener('click', () => $('#sbFile').click());
+  $('#sbFile').addEventListener('change', async (e) => {
+    const files = [...e.target.files];
+    e.target.value = ''; // so the same file can be picked again
+    if (files.length) await sbAddFiles(files);
+  });
+  $('#sbVolume').addEventListener('input', (e) => {
+    prefs.sbVolume = clamp(Number(e.target.value) || 60, 5, 100);
+    savePrefs();
+    e.target.style.setProperty('--fill', `${((prefs.sbVolume - 5) / 95) * 100}%`);
+    if (sb.playing) sb.playing.gain.gain.value = prefs.sbVolume / 100;
+  });
   $('#headphonesBtn').addEventListener('click', () => setHeadphones(!state.headphones));
   $('#noiseBtn').addEventListener('click', async () => {
     prefs.noiseRemoval = prefs.noiseRemoval === false;
@@ -3611,18 +4246,20 @@ function init() {
       toast(tr('Quality updated'));
     }
   });
-  $('#movieBtn').addEventListener('click', () => {
-    state.movie = !state.movie;
-    prefs.movie = state.movie;
+  $('#duckBtn').addEventListener('click', () => {
+    prefs.duck = prefs.duck !== true;
     savePrefs();
-    updateControls();
-    if (state.screen) {
-      for (const p of state.peers.values()) p.encSig = null;
-      retuneAll();
-      broadcast(myState()); // friends switch their cushion for my screen
-      toast(state.movie ? tr('Movie mode on: friends see your screen about 1.5 s late') : tr('Movie mode off'));
-    }
+    updateDuckUi();
+    updateDuck();
   });
+  $('#duckSlider').addEventListener('input', (e) => {
+    prefs.duckTo = clamp(Number(e.target.value) || 40, 10, 80);
+    savePrefs();
+    updateDuckUi();
+    updateDuck();
+  });
+  document.querySelectorAll('#picker .mode').forEach((b) => b.addEventListener('click', () => setShareMode(b.dataset.mode)));
+  $('#modeSuggest').addEventListener('click', () => setShareMode('video'));
   updateControls();
 
   $('#peopleToggle').addEventListener('click', () => setPeoplePanel($('#room').classList.contains('collapsed')));
@@ -3684,9 +4321,12 @@ function init() {
   document.addEventListener('keydown', (e) => {
     const pickerOpen = !$('#picker').classList.contains('hidden');
     if (e.key === 'Escape') {
+      const busy = pickerOpen || !$('#settingsMenu').classList.contains('hidden') || !$('#soundMenu').classList.contains('hidden');
       if (pickerOpen) closePicker(null);
       closeSettings();
+      closeSounds();
       closePersonMenu();
+      if (state.cinema && !busy && !document.fullscreenElement) setCinema(null);
     }
     if (e.key === 'Enter' && pickerOpen && pickerSelected && !e.repeat) { e.preventDefault(); goPicker(); }
     const inRoom = document.body.dataset.view === 'room';
@@ -3696,6 +4336,7 @@ function init() {
     if (k === 'm' && !state.globalKeys.includes('mute')) { e.preventDefault(); toggleMute(); }
     if (k === 'd' && !state.globalKeys.includes('deafen')) { e.preventDefault(); toggleDeafen(); }
     if (k === 'p') { e.preventDefault(); setPeoplePanel($('#room').classList.contains('collapsed')); }
+    if (k === 'c') { e.preventDefault(); toggleCinema(); }
   });
 
   // Closing the window while in a room: the main process waits a moment so

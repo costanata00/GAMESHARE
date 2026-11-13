@@ -37,5 +37,13 @@ contextBridge.exposeInMainWorld('gameshare', {
   startAppAudio: (sourceId) => ipcRenderer.invoke('app-audio-start', sourceId),
   stopAppAudio: () => ipcRenderer.invoke('app-audio-stop'),
   onAppAudio: (cb) => listen('app-audio-data', cb),
+  // ...or, better, over a direct line the page passes on to its audio thread
+  // (arrives as a window 'message' event carrying the port, see below)
   onAppAudioEnded: (cb) => listen('app-audio-ended', cb)
+});
+
+// The direct line for the shared app's sound: ports can't go through the
+// bridge above, so hand it to the page with a message event.
+ipcRenderer.on('app-audio-port', (e) => {
+  window.postMessage({ gsAppAudioPort: true }, '*', e.ports);
 });
