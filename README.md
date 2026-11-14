@@ -29,8 +29,8 @@ The installer appears in the `dist/` folder:
 
 ## How to use it
 
-1. Type your name, pick the **room size** (click the square for the number of players you want, 2 to 10) and click **Create a room**. Click **Copy invite** in the side panel and paste the message to your friends.
-2. Everyone else types (or pastes the whole invite message into) the code box and clicks **Join**. If the room is full they're told so; the host can make it bigger in **Settings → Room size**.
+1. Type your name, pick the **room size** (click the square for the number of players you want, 2 to 10) and click **Create a room**. Click **Copy invite** in the side panel and paste the message to your friends. Not sure your mic works? Click **Test your microphone** on the start screen first: pick the mic and watch the bar move.
+2. Everyone else types (or pastes the whole invite message into) the code box and clicks **Join**. The invite also carries a `gameshare://join/CODE` link: opening it starts GameShare straight in that room. While it's connecting, **Join** turns into **Cancel**. If the room is full they're told so; the host can make it bigger in **Settings → Room size**.
 3. Each player gets their own **colour**, the same on everyone's screen: it marks their name, avatar, slot and the banner on their shared screen, and your own buttons use yours. The squares under the room code show the room's slots: filled for each player, empty for free places.
 4. Click **Share screen**, pick your game window (or a whole screen), choose **Game** or **Video** (see [Watching videos together](#watching-videos-together)), and click **Share** (or press Enter). The picker remembers what you shared and the mode you used last time.
 5. While nobody is sharing, the stage shows everyone's avatar, lighting up as they talk. Shared screens fill the space at their real shape; your own preview tucks in beside your friends' screens. Click any screen to make it big, with the rest in a strip at the side. **Full screen** (the corner button, or a double-click) fills your monitor; controls and the mouse pointer hide after a moment, so just move the mouse to get them back. Press Esc to leave full screen.
@@ -42,23 +42,27 @@ The installer appears in the `dist/` folder:
    - Under each share's controls you can see **what sound it carries**, for example *sound: chrome.exe only* or *sound: whole computer except GameShare*.
 9. The panel button at the top (or Ctrl+Shift+P) folds the side panel into a slim strip of avatars and buttons, so screens get almost the whole window.
 10. Friends running an older GameShare get an **Old version** tag. Everyone should be on the same version (rooms bigger than 4 need everyone on 1.4 or newer; reconnecting by itself needs 1.5; the Video mode extras need 1.7).
-11. **Leaving and coming back:** the room stays open as long as anyone is in it, even if its creator leaves (whoever keeps it open becomes the host, marked with a crown, and can change the room size). The start screen shows **Rejoin room ABC123** for 12 hours; if everyone had left, Rejoin opens the room again under the same code and size.
+11. **Leaving and coming back:** **Leave** takes you out at once and shows **Undo** for a few seconds to go straight back (while you're sharing your screen it asks for a second click first, so a slip doesn't end your stream). the room stays open as long as anyone is in it, even if its creator leaves (whoever keeps it open becomes the host, marked with a crown, and can change the room size). The start screen shows **Rejoin room ABC123** for 12 hours; if everyone had left, Rejoin opens the room again under the same code and size.
 12. **Dropped connections fix themselves.** If someone's internet hiccups, their Wi-Fi reconnects or their laptop switches networks, they stay in the room marked **Reconnecting…** (a frozen screen says so too) and come back on their own, voice and screens included, usually within a few seconds of their connection returning. Only if they’re gone for about 50 seconds are they taken out of the room, and even then they find their way back by themselves once their internet returns. Leaving with the button or closing the app tells everyone right away.
 13. **If GameShare crashes**, it reopens and puts you straight back in the room as the same player (same colour, still muted if you were). Friends just see you reconnect.
 14. **In-game overlay** (Settings → App): shows who's talking in a corner of your screen while you play, plus a reminder when you're muted. It works over borderless and windowed games (not exclusive full screen), never takes clicks, and hides while GameShare itself is in front.
 15. **Soundboard** (the **Sounds** button at the bottom of the panel): click **Add sounds…** and pick audio files (MP3, WAV, OGG and the like, up to 60 seconds and 10 MB each, 30 sounds at most). They are saved on your computer, inside GameShare's own storage, so they're still there next time; nothing is uploaded anywhere. Click a sound and everyone in the room hears it in your voice, and so do you. It plays even while you're muted. Click it again to stop it, use the slider for its volume, and hover a sound and click **✕** to remove it. Friends on any version hear it; a friend who muted your voice doesn't.
 
-**Settings** (bottom of the panel):
+**Settings** (bottom of the panel) has four pages and reopens on the one you used last:
 - **Voice:** your microphone (with a level meter: talk to test it), your speakers or headset, *Remove background noise*, *Headphones mode* and *Lower streams while friends talk*.
-- **Room:** room size (host only).
-- **Sharing:** share quality and **Bitrate**. (Game or Video mode is picked in the share picker.)
-- **App:** the language, the in-game overlay and its corner, sound effects for joins, leaves, shares and mute, whether the mute shortcuts work while a game has focus, and **Copy report** for troubleshooting.
+- **Sharing:** share quality, **Bitrate** and the room size (host only). (Game or Video mode is picked in the share picker.)
+- **Shortcuts:** change the keys for mute, mute voices, collapsing the panel and cinema mode (click one, press the new keys), whether they work while a game has focus, and **Push-to-talk**.
+- **App:** language, the in-game overlay and its corner, sound effects, *Keep running when I close the window*, updates, and **Copy report** for troubleshooting.
 
 **Language:** GameShare speaks English and Brazilian Portuguese (português do Brasil). It follows your computer's language; to change it, use the menu at the bottom of the start screen or **Settings → App → Language**. It switches right away, even in a room. Each player picks their own, so friends can use different languages in the same room, and invites copied in either language work for everyone. (The **Copy report** text stays in English.) To add a language, see the top of `i18n.js`.
 
 **Tips**
 
-- Mute/unmute: **Ctrl+Shift+M**. Mute voices: **Ctrl+Shift+D**. While you're in a room both work even when your game has focus. If they clash with another app's shortcuts, turn off *Shortcuts work in games* in Settings. Inside GameShare, **Ctrl+Shift+P** folds the panel and **Ctrl+Shift+C** is cinema mode.
+- Mute/unmute: **Ctrl+Shift+M**. Mute voices: **Ctrl+Shift+D**. While you're in a room both work even when your game has focus. If they clash with a game or another app, change them in **Settings → Shortcuts** (or turn off *Shortcuts work in games*). Inside GameShare, **Ctrl+Shift+P** folds the panel and **Ctrl+Shift+C** is cinema mode.
+- **Push-to-talk** (Settings → Shortcuts): your mic is only live while you hold the key you pick (a key, or a side mouse button). On Windows it works while a game has focus and the game still gets the key; on Mac and Linux it works while GameShare is in front. The Mute button still mutes you outright.
+- **Talking while muted?** The mic button pulses and a note reminds you (not in push-to-talk).
+- **Keep running when I close the window** (Settings → App, off by default): while you're in a room, closing the window hides GameShare next to the clock instead of leaving the call. Click its icon to bring it back, or right-click → *Leave and quit*.
+- Notes at the top stay longer the more there is to read, and errors stay until you close them (click the note).
 - **Remove background noise** (on by default) filters keyboard clicks, fans and game sound picked up by your microphone, using RNNoise, a small noise filter built for voices that runs on your PC. It adds 10 ms of delay. If your voice ever sounds watery, turn it off.
 - If friends can't hear you, check **Settings → Microphone**: talk and watch the meter. GameShare remembers the microphone and speakers you pick; if one is unplugged it switches to the system default and tells you.
 - **Wearing headphones? Turn on _Headphones mode_ in Settings.** It switches off echo cancellation, which otherwise clips your voice whenever other sound is playing and is the most common cause of choppy-sounding voice. Leave it off if you use speakers, or friends will hear themselves echo.
@@ -140,6 +144,10 @@ If the free PeerJS server is ever down, run your own (`npx -p peer peerjs --port
 GAMESHARE_SIGNAL=http://your-server:9000/gameshare npm start
 ```
 
+## Optional: clickable invite links
+
+Chat apps don't turn `gameshare://` links into something you can click. To get a normal web link in your invites, publish `docs/join.html` (for example with GitHub Pages: repository **Settings → Pages → Deploy from a branch → `/docs`**) and put its address in `INVITE_PAGE` at the top of `renderer.js`, for example `https://your-name.github.io/GAMESHARE/join.html`. Invites then read `…/join.html#ABC123`: the page shows the code, a button that opens GameShare in that room, and a download link.
+
 ## Files
 
 | File | What it does |
@@ -153,3 +161,5 @@ GAMESHARE_SIGNAL=http://your-server:9000/gameshare npm start
 | `app-audio-worklet.js` | Turns the helper's raw sound into an audio track for the share, keeping as little of it waiting as possible (for lip sync) |
 | `noise-worklet.js`, `vendor/rnnoise-sync.js` | Background-noise removal for your microphone (RNNoise compiled to WebAssembly, from `@jitsi/rnnoise-wasm`; license in `vendor/rnnoise-LICENSE.txt`) |
 | `overlay.html`, `overlay.js`, `overlay-preload.js` | The in-game overlay window |
+| `native/keys.cpp` | Source of `bin/win32-x64/GameShareKeys.exe`, the small helper that tells GameShare when the push-to-talk key is held while a game has focus (Windows). Rebuild with `npm run build:keys` |
+| `docs/join.html` | Optional web page for invite links (see below) |

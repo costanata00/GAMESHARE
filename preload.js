@@ -12,7 +12,16 @@ contextBridge.exposeInMainWorld('gameshare', {
   chooseSource: (id) => ipcRenderer.invoke('choose-source', { id }),
   version: () => ipcRenderer.invoke('app-version'),
   // In-game shortcuts (mute / mute voices) while you're in a room
-  setShortcuts: (on) => ipcRenderer.invoke('shortcuts', on),
+  setShortcuts: (on, map) => ipcRenderer.invoke('shortcuts', on, map),
+  // Push-to-talk key watched while a game has focus (Windows)
+  pttStart: (combo) => ipcRenderer.invoke('ptt-start', combo),
+  pttStop: () => ipcRenderer.invoke('ptt-stop'),
+  onPtt: (cb) => listen('ptt', cb),
+  // gameshare://join/CODE links
+  takeJoinLink: () => ipcRenderer.invoke('join-link-take'),
+  onJoinLink: (cb) => listen('join-link', cb),
+  // Keep running in the tray when the window is closed during a call
+  tray: (msg) => ipcRenderer.send('tray', msg),
   onShortcut: (cb) => listen('shortcut', cb),
   // Window minimized / restored
   onWindowVisible: (cb) => listen('window-visible', cb),
