@@ -23,6 +23,15 @@
         <input id="nameInput" maxlength="24" autocomplete="off" placeholder="e.g. Nata">
       </label>
 
+      <div class="mic-test">
+        <button id="micTestBtn" class="link-btn" type="button" aria-expanded="false" aria-controls="micTestBox">Test your microphone</button>
+        <div id="micTestBox" class="mic-test-box hidden">
+          <select id="lobbyMicSelect" aria-label="Microphone"></select>
+          <div class="mic-meter" title="Talk to test your microphone"><i id="lobbyMicLevel"></i></div>
+          <small id="micTestHint" role="status">Talk: the bar should move.</small>
+        </div>
+      </div>
+
       <div class="field size-field">
         <span id="sizeLabel">Room size</span>
         <div class="size-row">
@@ -75,7 +84,7 @@
     <aside id="panel" class="panel" aria-label="Room">
       <div class="panel-top">
         <div class="brandmark"><div class="logo small" aria-hidden="true"><span></span><span></span><span></span></div><span class="brand-name">GameShare</span></div>
-        <button id="peopleToggle" class="icon-btn" aria-pressed="true" title="Collapse the panel (Ctrl+Shift+P)">
+        <button id="peopleToggle" class="icon-btn" aria-pressed="true" title="Collapse the panel">
           <span class="i i-collapse-panel" aria-hidden="true"></span>
         </button>
       </div>
@@ -100,10 +109,10 @@
           <span class="i i-screen" aria-hidden="true"></span><span class="ctrl-label">Share screen</span>
         </button>
         <div class="dock">
-          <button id="micBtn" class="dock-btn" aria-pressed="false" title="Mute (Ctrl+Shift+M)">
+          <button id="micBtn" class="dock-btn" aria-pressed="false" title="Mute">
             <span class="i i-mic" aria-hidden="true"></span><span class="ctrl-label">Mute</span>
           </button>
-          <button id="deafenBtn" class="dock-btn" aria-pressed="false" title="Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)">
+          <button id="deafenBtn" class="dock-btn" aria-pressed="false" title="Mute everyone’s voice for you. Streams keep playing">
             <span class="i i-headphones" aria-hidden="true"></span><span class="ctrl-label">Mute voices</span>
           </button>
           <button id="sbBtn" class="dock-btn" aria-haspopup="true" aria-expanded="false" title="Soundboard: play a sound to everyone in the room">
@@ -129,114 +138,156 @@
         </div>
 
         <div id="settingsMenu" class="menu hidden" role="dialog" aria-label="Settings">
-          <div class="menu-group">Voice</div>
-          <div class="menu-row stack">
-            <label class="menu-text" for="micSelect"><b>Microphone</b></label>
-            <select id="micSelect"></select>
-            <div class="mic-meter" title="Talk to test your microphone"><i id="micLevel"></i></div>
+          <div class="menu-tabs" role="tablist" aria-label="Settings">
+            <button class="menu-tab" role="tab" type="button" id="tab-voice" data-page="voice" aria-controls="page-voice">Voice</button>
+            <button class="menu-tab" role="tab" type="button" id="tab-sharing" data-page="sharing" aria-controls="page-sharing">Sharing</button>
+            <button class="menu-tab" role="tab" type="button" id="tab-keys" data-page="keys" aria-controls="page-keys">Shortcuts</button>
+            <button class="menu-tab" role="tab" type="button" id="tab-app" data-page="app" aria-controls="page-app">App</button>
           </div>
-          <div class="menu-row stack">
-            <label class="menu-text" for="outSelect"><b>Speakers or headset</b><small>Where friends’ voices and their streams play</small></label>
-            <select id="outSelect"></select>
-          </div>
-          <div class="menu-row">
-            <span class="menu-text"><b>Remove background noise</b><small>Filters out keyboard, fans and game sound picked up by your mic</small></span>
-            <button id="noiseBtn" class="switch" role="switch" aria-checked="true" aria-label="Remove background noise"></button>
-          </div>
-          <div class="menu-row">
-            <span class="menu-text"><b>Headphones mode</b><small>Clearer voice with echo cancellation off. Only with headphones.</small></span>
-            <button id="headphonesBtn" class="switch" role="switch" aria-checked="false" aria-label="Headphones mode"></button>
-          </div>
-          <div class="menu-row">
-            <span class="menu-text"><b>Lower streams while friends talk</b><small>Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.</small></span>
-            <button id="duckBtn" class="switch" role="switch" aria-checked="false" aria-label="Lower streams while friends talk"></button>
-          </div>
-          <label class="menu-row stack" id="duckRow">
-            <span class="menu-text"><small id="duckText"></small></span>
-            <input type="range" id="duckSlider" min="10" max="80" step="5" aria-label="Stream volume while friends talk">
-          </label>
 
-          <div class="menu-group">Room</div>
-          <div class="menu-row" id="sizeRow">
-            <span class="menu-text"><b>Room size</b><small id="sizeHint">How many players can be in this room</small></span>
-            <div class="stepper" id="sizeStepper">
-              <button id="sizeDown" class="step" aria-label="Fewer players">−</button>
-              <output id="sizeNow">4</output>
-              <button id="sizeUp" class="step" aria-label="More players">+</button>
+          <div class="menu-page" id="page-voice" role="tabpanel" aria-labelledby="tab-voice">
+            <div class="menu-row stack">
+              <label class="menu-text" for="micSelect"><b>Microphone</b></label>
+              <select id="micSelect"></select>
+              <div class="mic-meter" title="Talk to test your microphone"><i id="micLevel"></i></div>
+            </div>
+            <div class="menu-row stack">
+              <label class="menu-text" for="outSelect"><b>Speakers or headset</b><small>Where friends’ voices and their streams play</small></label>
+              <select id="outSelect"></select>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Remove background noise</b><small>Filters out keyboard, fans and game sound picked up by your mic</small></span>
+              <button id="noiseBtn" class="switch" role="switch" aria-checked="true" aria-label="Remove background noise"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Headphones mode</b><small>Clearer voice with echo cancellation off. Only with headphones.</small></span>
+              <button id="headphonesBtn" class="switch" role="switch" aria-checked="false" aria-label="Headphones mode"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Lower streams while friends talk</b><small>Turns shared screens’ sound down a little while someone is speaking, so you hear them over the film.</small></span>
+              <button id="duckBtn" class="switch" role="switch" aria-checked="false" aria-label="Lower streams while friends talk"></button>
+            </div>
+            <label class="menu-row stack" id="duckRow">
+              <span class="menu-text"><small id="duckText"></small></span>
+              <input type="range" id="duckSlider" min="10" max="80" step="5" aria-label="Stream volume while friends talk">
+            </label>
+
+          </div>
+
+          <div class="menu-page hidden" id="page-sharing" role="tabpanel" aria-labelledby="tab-sharing">
+            <label class="menu-row">
+              <span class="menu-text"><b>Share quality</b><small>For your own screen. Stays smooth when your PC or connection is busy.</small></span>
+              <select id="qualitySelect">
+                <option value="720p30">720p, 30 fps</option>
+                <option value="1080p30">1080p, 30 fps</option>
+                <option value="1080p60">1080p, 60 fps</option>
+              </select>
+            </label>
+            <label class="menu-row stack">
+              <span class="menu-text"><b>Bitrate</b><small>The most each friend gets from you. Higher is sharper in fast games but uses more upload. Lower it if friends stutter.</small></span>
+              <select id="bitrateSelect">
+                <option value="auto">Automatic</option>
+                <option value="3000">3 Mbps</option>
+                <option value="5000">5 Mbps</option>
+                <option value="8000">8 Mbps</option>
+                <option value="12000">12 Mbps</option>
+                <option value="16000">16 Mbps</option>
+                <option value="20000">20 Mbps</option>
+              </select>
+            </label>
+
+            <div class="menu-group">Room</div>
+            <div class="menu-row" id="sizeRow">
+              <span class="menu-text"><b>Room size</b><small id="sizeHint">How many players can be in this room</small></span>
+              <div class="stepper" id="sizeStepper">
+                <button id="sizeDown" class="step" aria-label="Fewer players">−</button>
+                <output id="sizeNow">4</output>
+                <button id="sizeUp" class="step" aria-label="More players">+</button>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="menu-page hidden" id="page-keys" role="tabpanel" aria-labelledby="tab-keys">
+            <div class="menu-row">
+              <span class="menu-text"><b>Mute</b></span>
+              <button class="key-btn" type="button" data-key="mute"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Mute voices</b></span>
+              <button class="key-btn" type="button" data-key="deafen"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Collapse the panel</b></span>
+              <button class="key-btn" type="button" data-key="panel"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Cinema mode</b></span>
+              <button class="key-btn" type="button" data-key="cinema"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Shortcuts work in games</b><small>Mute keys work while a game has focus. Turn off if they clash with another app.</small></span>
+              <button id="globalKeysBtn" class="switch" role="switch" aria-checked="true" aria-label="Shortcuts work in games"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Push-to-talk</b><small id="pttHint">Your mic is only on while you hold a key.</small></span>
+              <button id="pttBtn" class="switch" role="switch" aria-checked="false" aria-label="Push-to-talk"></button>
+            </div>
+            <div class="menu-row" id="pttKeyRow">
+              <span class="menu-text"><b>Push-to-talk key</b><small>A key or a side mouse button</small></span>
+              <button class="key-btn" type="button" data-key="ptt"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><small>Click a shortcut, then press the new keys. Esc cancels, Backspace clears it.</small></span>
+              <button id="keysReset" class="btn ghost menu-btn" type="button">Reset</button>
             </div>
           </div>
 
-          <div class="menu-group">Sharing</div>
-          <label class="menu-row">
-            <span class="menu-text"><b>Share quality</b><small>For your own screen. Stays smooth when your PC or connection is busy.</small></span>
-            <select id="qualitySelect">
-              <option value="720p30">720p, 30 fps</option>
-              <option value="1080p30">1080p, 30 fps</option>
-              <option value="1080p60">1080p, 60 fps</option>
-            </select>
-          </label>
-          <label class="menu-row stack">
-            <span class="menu-text"><b>Bitrate</b><small>The most each friend gets from you. Higher is sharper in fast games but uses more upload. Lower it if friends stutter.</small></span>
-            <select id="bitrateSelect">
-              <option value="auto">Automatic</option>
-              <option value="3000">3 Mbps</option>
-              <option value="5000">5 Mbps</option>
-              <option value="8000">8 Mbps</option>
-              <option value="12000">12 Mbps</option>
-              <option value="16000">16 Mbps</option>
-              <option value="20000">20 Mbps</option>
-            </select>
-          </label>
-
-          <div class="menu-group">App</div>
-          <label class="menu-row">
-            <span class="menu-text"><b>Language</b></span>
-            <select id="menuLang" class="lang-select">
-              <option value="auto">Automatic</option>
-              <option value="en">English</option>
-              <option value="pt">Português (Brasil)</option>
-            </select>
-          </label>
-          <div class="menu-row">
-            <span class="menu-text"><b>In-game overlay</b><small>Shows who’s talking on top of your game. Works with borderless and windowed games.</small></span>
-            <button id="overlayBtn" class="switch" role="switch" aria-checked="false" aria-label="In-game overlay"></button>
-          </div>
-          <label class="menu-row" id="overlayCornerRow">
-            <span class="menu-text"><b>Overlay corner</b></span>
-            <select id="overlayCorner">
-              <option value="top left">Top left</option>
-              <option value="top right">Top right</option>
-              <option value="bottom left">Bottom left</option>
-              <option value="bottom right">Bottom right</option>
-            </select>
-          </label>
-          <div class="menu-row">
-            <span class="menu-text"><b>Sound effects</b><small>Joins, leaves, shares and mute</small></span>
-            <button id="soundsBtn" class="switch" role="switch" aria-checked="true" aria-label="Sound effects"></button>
-          </div>
-          <div class="menu-row">
-            <span class="menu-text"><b>Shortcuts work in games</b><small>Mute keys work while a game has focus. Turn off if they clash with another app.</small></span>
-            <button id="globalKeysBtn" class="switch" role="switch" aria-checked="true" aria-label="Shortcuts work in games"></button>
-          </div>
-          <div class="menu-note">
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd> mute</div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd> mute voices</div>
-            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd> collapse the panel</div>
-          </div>
-          <div class="menu-row">
-            <span class="menu-text"><b>Check for updates</b><small>Looks for a new GameShare when it opens. Nothing is installed unless you say so.</small></span>
-            <button id="updateCheckSwitch" class="switch" role="switch" aria-checked="true" aria-label="Check for updates"></button>
-          </div>
-          <div class="menu-row stack">
-            <span class="menu-text"><b>Updates</b><small id="updateStatus"></small></span>
-            <span class="update-btns">
-              <button id="updateRevertBtn" class="btn ghost menu-btn hidden"></button>
-              <button id="updateMenuBtn" class="btn menu-btn">Check now</button>
-            </span>
-          </div>
-          <div class="menu-row">
-            <span class="menu-text"><b>Something not working?</b><small>Copies a report on your connection, devices and settings to paste to whoever helps you. Screens also have a Stats button.</small></span>
-            <button id="diagBtn" class="btn menu-btn">Copy report</button>
+          <div class="menu-page hidden" id="page-app" role="tabpanel" aria-labelledby="tab-app">
+            <label class="menu-row">
+              <span class="menu-text"><b>Language</b></span>
+              <select id="menuLang" class="lang-select">
+                <option value="auto">Automatic</option>
+                <option value="en">English</option>
+                <option value="pt">Português (Brasil)</option>
+              </select>
+            </label>
+            <div class="menu-row">
+              <span class="menu-text"><b>In-game overlay</b><small>Shows who’s talking on top of your game. Works with borderless and windowed games.</small></span>
+              <button id="overlayBtn" class="switch" role="switch" aria-checked="false" aria-label="In-game overlay"></button>
+            </div>
+            <label class="menu-row" id="overlayCornerRow">
+              <span class="menu-text"><b>Overlay corner</b></span>
+              <select id="overlayCorner">
+                <option value="top left">Top left</option>
+                <option value="top right">Top right</option>
+                <option value="bottom left">Bottom left</option>
+                <option value="bottom right">Bottom right</option>
+              </select>
+            </label>
+            <div class="menu-row">
+              <span class="menu-text"><b>Sound effects</b><small>Joins, leaves, shares and mute</small></span>
+              <button id="soundsBtn" class="switch" role="switch" aria-checked="true" aria-label="Sound effects"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Keep running when I close the window</b><small>While you’re in a room, closing the window hides GameShare next to the clock instead of leaving. Quit from its icon there.</small></span>
+              <button id="trayBtn" class="switch" role="switch" aria-checked="false" aria-label="Keep running when I close the window"></button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Check for updates</b><small>Looks for a new GameShare when it opens. Nothing is installed unless you say so.</small></span>
+              <button id="updateCheckSwitch" class="switch" role="switch" aria-checked="true" aria-label="Check for updates"></button>
+            </div>
+            <div class="menu-row stack">
+              <span class="menu-text"><b>Updates</b><small id="updateStatus"></small></span>
+              <span class="update-btns">
+                <button id="updateRevertBtn" class="btn ghost menu-btn hidden"></button>
+                <button id="updateMenuBtn" class="btn menu-btn">Check now</button>
+              </span>
+            </div>
+            <div class="menu-row">
+              <span class="menu-text"><b>Something not working?</b><small>Copies a report on your connection, devices and settings to paste to whoever helps you. Screens also have a Stats button.</small></span>
+              <button id="diagBtn" class="btn menu-btn">Copy report</button>
+            </div>
           </div>
           <div id="menuVersion" class="menu-foot"></div>
         </div>

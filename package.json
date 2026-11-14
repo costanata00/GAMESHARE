@@ -12,6 +12,7 @@
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
+    "build:keys": "x86_64-w64-mingw32-g++ -O2 -static -municode -o bin/win32-x64/GameShareKeys.exe native/keys.cpp",
     "build:audio": "x86_64-w64-mingw32-g++ -O2 -static -municode -o bin/win32-x64/GameShareAudio.exe native/app-audio.cpp -lole32",
     "update:keygen": "node scripts/update-keygen.js",
     "update:pack": "node scripts/update-pack.js"
@@ -39,6 +40,7 @@
       "node_modules/peerjs/dist/peerjs.min.js",
       "app-audio-worklet.js",
       "bin/win32-x64/GameShareAudio.exe",
+      "bin/win32-x64/GameShareKeys.exe",
       "build/icon.png",
       "fonts/archivo.woff2",
       "fonts/OFL.txt",
@@ -73,6 +75,14 @@
       "category": "Game",
       "icon": "build/icon.png"
     },
+    "protocols": [
+      {
+        "name": "GameShare invite",
+        "schemes": [
+          "gameshare"
+        ]
+      }
+    ],
     "asarUnpack": [
       "bin/**"
     ]

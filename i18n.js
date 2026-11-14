@@ -376,7 +376,72 @@ const PT = {
   'Installed version: {v}.': 'Versão do instalador: {v}.',
   'Back to {v}': 'Voltar para a {v}',
   'Goes back to {v} the next time you open GameShare.': 'Volta para a {v} na próxima vez que você abrir o GameShare.',
-  'Update failed: {error}': 'A atualização falhou: {error}'
+  'Update failed: {error}': 'A atualização falhou: {error}',
+
+  // ---- notes at the top
+  'Dismiss': 'Fechar',
+  'Undo': 'Desfazer',
+
+  // ---- start screen: joining, mic test, invite links
+  'Cancelled.': 'Cancelado.',
+  'Cancelling…': 'Cancelando…',
+  'Type your name, then press Join.': 'Digite seu nome e clique em Entrar.',
+  'Test your microphone': 'Testar seu microfone',
+  'Starting your microphone…': 'Ligando seu microfone…',
+  'Talk: the bar should move.': 'Fale: a barra deve se mexer.',
+  'Sounds good. Friends will hear you.': 'Tudo certo. Seus amigos vão te ouvir.',
+  'No microphone found. Check that it’s plugged in and allowed.':
+    'Nenhum microfone encontrado. Confira se ele está conectado e permitido.',
+  'You were invited to room {code}.': 'Você foi convidado para a sala {code}.',
+
+  // ---- leaving
+  'Sure?': 'Mesmo?',
+  'Click again to stop sharing and leave': 'Clique de novo para parar de compartilhar e sair',
+  'You’re sharing your screen. Click Leave again to stop sharing and leave.':
+    'Você está compartilhando sua tela. Clique em Sair de novo para parar de compartilhar e sair.',
+  'You left room {code}.': 'Você saiu da sala {code}.',
+
+  // ---- mic button
+  'Mute your mic': 'Silenciar seu microfone',
+  'Unmute your mic': 'Reativar seu microfone',
+  'Mute everyone’s voice for you. Streams keep playing':
+    'Silenciar a voz de todos só para você. As transmissões continuam tocando',
+  'Hear everyone’s voice again': 'Voltar a ouvir a voz de todos',
+  'Collapse the panel': 'Recolher o painel',
+  'Expand the panel': 'Expandir o painel',
+  'Hold {keys}': 'Segure {keys}',
+  'Cinema mode: only this screen, as big as the window': 'Modo cinema: só esta tela, do tamanho da janela',
+  'Leave cinema mode': 'Sair do modo cinema',
+  'Cinema mode. Press {keys} to leave.': 'Modo cinema. Aperte {keys} para sair.',
+  'Esc or {keys}': 'Esc ou {keys}',
+  'Cinema mode': 'Modo cinema',
+  'You’re muted. Friends can’t hear you.': 'Você está no mudo. Seus amigos não te ouvem.',
+  'Press {keys} to unmute.': 'Aperte {keys} para reativar.',
+
+  // ---- settings: shortcuts, push-to-talk, tray
+  'Shortcuts': 'Atalhos',
+  'Press keys…': 'Aperte as teclas…',
+  'Not set': 'Não definido',
+  'Reset': 'Restaurar',
+  'Click a shortcut, then press the new keys. Esc cancels, Backspace clears it.':
+    'Clique em um atalho e aperte as novas teclas. Esc cancela, Backspace apaga.',
+  'Use Ctrl or Alt with a key, or an F key.': 'Use Ctrl ou Alt com uma tecla, ou uma tecla F.',
+  'Those keys are already used for something else.': 'Essas teclas já estão em uso para outra coisa.',
+  'That key can’t be used. Try another.': 'Essa tecla não pode ser usada. Tente outra.',
+  'Push-to-talk': 'Apertar para falar',
+  'Push-to-talk key': 'Tecla de apertar para falar',
+  'A key or a side mouse button': 'Uma tecla ou um botão lateral do mouse',
+  'Your mic is only on while you hold a key.': 'Seu microfone só fica ligado enquanto você segura uma tecla.',
+  'Your mic is only on while you hold a key. Works in games too.':
+    'Seu microfone só fica ligado enquanto você segura uma tecla. Funciona dentro dos jogos também.',
+  'Your mic is only on while you hold a key. On this system, only while GameShare is in front.':
+    'Seu microfone só fica ligado enquanto você segura uma tecla. Neste sistema, só com o GameShare em primeiro plano.',
+  'Keep running when I close the window': 'Continuar aberto quando eu fechar a janela',
+  'While you’re in a room, closing the window hides GameShare next to the clock instead of leaving. Quit from its icon there.':
+    'Enquanto você está em uma sala, fechar a janela esconde o GameShare ao lado do relógio em vez de sair. Para encerrar, use o ícone dele ali.',
+  'Open GameShare': 'Abrir o GameShare',
+  'Leave and quit': 'Sair da sala e fechar',
+  'GameShare is still running. You’re still in the room.': 'O GameShare continua aberto. Você ainda está na sala.'
 };
 
 const LANGS = { pt: PT };

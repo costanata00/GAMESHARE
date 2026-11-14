@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join a GameShare room</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #101114; color: #eceef3;
+         font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  main { width: min(420px, calc(100vw - 32px)); padding: 32px; border-radius: 20px; background: #17181d;
+         box-shadow: 0 0 0 1px #2b2e36; text-align: center; }
+  h1 { margin: 0 0 6px; font-size: 22px; }
+  p { margin: 0 0 18px; color: #9a9dab; }
+  .code { margin: 0 0 20px; font-size: 40px; font-weight: 800; letter-spacing: .12em; color: #b6f23a; }
+  a.open { display: block; padding: 13px 18px; border-radius: 10px; background: #b6f23a; color: #10160a;
+           font-weight: 700; text-decoration: none; }
+  a.get { color: #9a9dab; font-size: 14px; }
+  .small { margin-top: 18px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>You're invited to a GameShare room</h1>
+  <p id="lead">Open the app to join your friends.</p>
+  <div class="code" id="code"></div>
+  <a class="open" id="open" href="#">Open in GameShare</a>
+  <p class="small">Don't have it yet? <a class="get" href="https://github.com/costanata00/gameshare/releases/latest">Download GameShare</a>, then come back to this page or type the code.</p>
+</main>
+<script>
+  // The room code comes after the # (join.html#ABC123), so it never reaches a server.
+  var code = (location.hash || '').slice(1).toUpperCase();
+  if (/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(code)) {
+    document.getElementById('code').textContent = code;
+    document.getElementById('open').href = 'gameshare://join/' + code;
+  } else {
+    document.getElementById('lead').textContent = 'This invite link has no room code. Ask your friend for a new one.';
+    document.getElementById('open').style.display = 'none';
+  }
+</script>
+</body>
+</html>

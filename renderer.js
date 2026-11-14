@@ -93,9 +93,15 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /* ------------------------------------------------------------ preferences */
 
+// Shortcuts you can change in Settings. "Ctrl" also means Cmd on a Mac.
+const DEFAULT_KEYS = { mute: 'Ctrl+Shift+M', deafen: 'Ctrl+Shift+D', panel: 'Ctrl+Shift+P', cinema: 'Ctrl+Shift+C' };
+// Web page that opens an invite in the app (see docs/join.html). Empty: invites carry a gameshare:// link.
+const INVITE_PAGE = '';
+
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
-              micId: '', outId: '', duck: false, duckTo: 40, sbVolume: 60, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null };
+              micId: '', outId: '', duck: false, duckTo: 40, sbVolume: 60, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null,
+              keys: null, ptt: false, pttKey: '', tray: false, settingsTab: 'voice' };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -112,6 +118,9 @@ const prefs = (() => {
   d.roomSize = Math.min(MAX_LIMIT, Math.max(MIN_SIZE, Number(d.roomSize) || DEFAULT_SIZE));
   d.duckTo = Math.min(80, Math.max(10, Number(d.duckTo) || 40));
   d.sbVolume = Math.min(100, Math.max(5, Number(d.sbVolume) || 60));
+  d.keys = { ...DEFAULT_KEYS, ...(d.keys && typeof d.keys === 'object' ? d.keys : null) };
+  for (const k of Object.keys(d.keys)) if (typeof d.keys[k] !== 'string' || !(k in DEFAULT_KEYS)) delete d.keys[k];
+  if (typeof d.pttKey !== 'string') d.pttKey = '';
   return d;
 })();
 function savePrefs() {
@@ -162,12 +171,44 @@ function makeCode() {
   return Array.from(buf, (n) => CODE_ALPHABET[n % CODE_ALPHABET.length]).join('');
 }
 
-function toast(msg, kind = '') {
+// A short message at the top. Longer text stays longer; errors stay until
+// you dismiss them. Hovering pauses it, a click closes it. opts.action adds a
+// button ({ label, run }). Returns a function that closes it.
+const TOAST_MAX = 4;
+function toast(msg, kind = '', opts = {}) {
   note(msg);
-  const t = el('div', 'toast ' + kind, msg);
-  $('#toasts').appendChild(t);
-  setTimeout(() => t.classList.add('out'), 3600);
-  setTimeout(() => t.remove(), 4100);
+  const box = $('#toasts');
+  const t = el('div', 'toast ' + kind);
+  t.appendChild(el('span', 'toast-msg', msg));
+  let timer = null;
+  const close = () => {
+    if (t.gone) return;
+    t.gone = true;
+    clearTimeout(timer);
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 400);
+  };
+  t.closeToast = close;
+  if (opts.action) {
+    const b = el('button', 'toast-action', opts.action.label);
+    b.type = 'button';
+    b.addEventListener('click', (e) => { e.stopPropagation(); close(); opts.action.run(); });
+    t.appendChild(b);
+  }
+  const x = el('button', 'toast-x', '×');
+  x.type = 'button';
+  x.setAttribute('aria-label', tr('Dismiss'));
+  t.appendChild(x);
+  t.addEventListener('click', close);
+  const ms = kind === 'err' ? 0 : opts.ms || clamp(2400 + String(msg).length * 60, 3600, 12000);
+  const arm = () => { if (ms && !t.gone) { clearTimeout(timer); timer = setTimeout(close, ms); } };
+  t.addEventListener('mouseenter', () => clearTimeout(timer));
+  t.addEventListener('mouseleave', arm);
+  box.appendChild(t);
+  const live = [...box.children].filter((c) => !c.gone);
+  while (live.length > TOAST_MAX) live.shift().closeToast();
+  arm();
+  return close;
 }
 
 // A notice that stays until it's closed (one per key), for things worth
@@ -833,10 +874,12 @@ function openSounds() {
   sbRender();
   $('#soundMenu').classList.remove('hidden');
   $('#sbBtn').setAttribute('aria-expanded', 'true');
+  dialogOpened($('#soundMenu'));
 }
 function closeSounds() {
   $('#soundMenu').classList.add('hidden');
   $('#sbBtn').setAttribute('aria-expanded', 'false');
+  dialogClosed($('#soundMenu'));
 }
 
 /* ------------------------------------------------------------ media setup */
@@ -945,7 +988,7 @@ async function swapMic(opts = {}) {
     releaseMic();
     const fresh = await getMic();
     if (opts.useDefault) prefs.micId = savedId; // remember their choice for when it's back
-    fresh.getAudioTracks().forEach((t) => { t.enabled = !state.muted; });
+    fresh.getAudioTracks().forEach((t) => { t.enabled = micLive(); });
     const track = fresh.getAudioTracks()[0];
     for (const p of state.peers.values()) {
       const pc = p.voice && p.voice.peerConnection;
@@ -960,6 +1003,7 @@ async function swapMic(opts = {}) {
     watchLevel('me', fresh);
     refreshDevices();
     sbStop(); // a soundboard sound was mixed with the old microphone
+    syncMutedWatch();
   })();
   try { await swapping; } finally { swapping = null; }
 }
@@ -986,7 +1030,7 @@ function deviceLabel(d, i, kind) {
 async function refreshDevices() {
   let list = [];
   try { list = await navigator.mediaDevices.enumerateDevices(); } catch { return; }
-  for (const [kind, selId, pref] of [['audioinput', '#micSelect', 'micId'], ['audiooutput', '#outSelect', 'outId']]) {
+  for (const [kind, selId, pref] of [['audioinput', '#micSelect', 'micId'], ['audiooutput', '#outSelect', 'outId'], ['audioinput', '#lobbyMicSelect', 'micId']]) {
     const sel = $(selId);
     if (!sel) continue;
     const all = list.filter((d) => d.kind === kind);
@@ -2308,6 +2352,7 @@ async function openPicker() {
   pickerSources = [];
   setShareMode(prefs.shareMode);
   modal.classList.remove('hidden');
+  dialogOpened(modal, modal.querySelector('.tab.active'));
 
   const done = new Promise((resolve) => { pickerResolve = resolve; });
   await loadSources();
@@ -2336,6 +2381,10 @@ async function loadSources() {
   $('#pickerGo').disabled = !pickerSelected;
   renderSources();
   renderShareMode();
+  // Keyboard: start on what you shared last time, so Enter shares it again.
+  const act = document.activeElement;
+  const sel = $('#sourceGrid .source.selected') || $('#sourceGrid .source');
+  if (sel && (act === document.body || (act && act.closest && act.closest('#picker .tabs')))) sel.focus({ preventScroll: true });
 
   try {
     const withThumbs = await window.gameshare.listSources({ thumbs: true });
@@ -2360,6 +2409,7 @@ function setThumb(box, src) {
 
 function closePicker(result) {
   $('#picker').classList.add('hidden');
+  dialogClosed($('#picker'));
   thumbRound++;
   const r = pickerResolve;
   pickerResolve = null;
@@ -2371,6 +2421,7 @@ function renderSources() {
     const on = t.dataset.kind === pickerKind;
     t.classList.toggle('active', on);
     t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
   });
   $('#audioOptText').innerHTML = pickerKind === 'window'
     ? `${tr('Share this app’s sound')} <small>${tr('Only the window you pick. Never your call.')}</small>`
@@ -2555,7 +2606,7 @@ function addTile(id, stream, isMe) {
       const on = state.cinema === id;
       cine.textContent = tr('Cinema');
       cine.setAttribute('aria-pressed', String(on));
-      cine.title = on ? tr('Leave cinema mode (Esc or Ctrl+Shift+C)') : tr('Cinema mode: only this screen, as big as the window (Ctrl+Shift+C)');
+      cine.title = on ? tr('Leave cinema mode') + ` (${escOr()})` : withKeys(tr('Cinema mode: only this screen, as big as the window'), prefs.keys.cinema);
     }
     stats.textContent = tr('Stats');
     stats.title = isMe ? tr('Show what each friend is getting from you') : tr('Show stream numbers: resolution, frame rate, bitrate, delay');
@@ -2631,7 +2682,7 @@ function toggleCinema(id) {
   if (!prefs.cinemaTip) {
     prefs.cinemaTip = true;
     savePrefs();
-    toast(tr('Cinema mode. Press Esc or Ctrl+Shift+C to leave.'));
+    toast(tr('Cinema mode. Press {keys} to leave.', { keys: escOr() }));
   }
 }
 
@@ -2927,7 +2978,7 @@ function makeRow(key, me) {
     r.hear.addEventListener('click', (e) => { e.stopPropagation(); toggleLocalMute(key); });
     li.tabIndex = 0;
     li.addEventListener('click', () => openPersonMenu(key));
-    li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPersonMenu(key); } });
+    li.addEventListener('keydown', (e) => { if (e.target === li && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPersonMenu(key, true); } });
   }
   li.append(av, info, status);
   if (r.hear) li.append(r.hear);
@@ -3104,7 +3155,7 @@ function renderPeople() {
 
 let menuKey = null;
 
-function openPersonMenu(key) {
+function openPersonMenu(key, byKeyboard) {
   const p = state.peers.get(key);
   if (!p || !p.greeted) return;
   const m = $('#personMenu');
@@ -3119,7 +3170,9 @@ function openPersonMenu(key) {
   updatePersonMenu();
   positionPersonMenu();
   for (const [k, r] of rows) r.li.classList.toggle('menu-open', k === key);
+  if (byKeyboard) dialogOpened(m, vol); else if (!focusBack.has(m)) focusBack.set(m, r0(key));
 }
+const r0 = (key) => { const r = rows.get(key); return r ? r.li : null; };
 
 function positionPersonMenu() {
   const r = rows.get(menuKey);
@@ -3160,6 +3213,7 @@ function updatePersonMenu() {
 function closePersonMenu() {
   menuKey = null;
   $('#personMenu').classList.add('hidden');
+  dialogClosed($('#personMenu'));
   for (const r of rows.values()) r.li.classList.remove('menu-open');
 }
 
@@ -3503,13 +3557,24 @@ function updateControls() {
   const micBtn = $('#micBtn');
   micBtn.classList.toggle('off', state.muted);
   micBtn.setAttribute('aria-pressed', String(state.muted));
-  micBtn.querySelector('.ctrl-label').textContent = state.muted ? tr('Unmute') : tr('Mute');
+  const hold = pttOn() && !state.muted; // push-to-talk: the button shows which key to hold
+  micBtn.classList.toggle('ptt', hold);
+  micBtn.classList.toggle('talking', hold && ptt.held);
+  micBtn.querySelector('.ctrl-label').textContent = state.muted ? tr('Unmute') : hold ? tr('Hold {keys}', { keys: prefs.pttKey }) : tr('Mute');
   const deafBtn = $('#deafenBtn');
   deafBtn.classList.toggle('off', state.deafened);
   deafBtn.setAttribute('aria-pressed', String(state.deafened));
   deafBtn.querySelector('.ctrl-label').textContent = state.deafened ? tr('Voices off') : tr('Voices');
-  micBtn.title = state.muted ? tr('Unmute your mic (Ctrl+Shift+M)') : tr('Mute your mic (Ctrl+Shift+M)');
-  deafBtn.title = state.deafened ? tr('Hear everyone’s voice again (Ctrl+Shift+D)') : tr('Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)');
+  micBtn.title = withKeys(state.muted ? tr('Unmute your mic') : tr('Mute your mic'), prefs.keys.mute);
+  deafBtn.title = withKeys(state.deafened ? tr('Hear everyone’s voice again') : tr('Mute everyone’s voice for you. Streams keep playing'), prefs.keys.deafen);
+  if (!leaveArm) { $('#leaveBtn').dataset.label = tr('Leave'); $('#leaveBtn').title = tr('Leave the room'); }
+  $('#pttBtn').setAttribute('aria-checked', String(prefs.ptt === true));
+  $('#pttKeyRow').classList.toggle('hidden', prefs.ptt !== true);
+  $('#pttHint').textContent = window.gameshare.platform === 'win32'
+    ? tr('Your mic is only on while you hold a key. Works in games too.')
+    : tr('Your mic is only on while you hold a key. On this system, only while GameShare is in front.');
+  $('#trayBtn').setAttribute('aria-checked', String(prefs.tray === true));
+  renderKeys();
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
   updateDuckUi();
   updateBitrateUi();
@@ -3538,6 +3603,8 @@ function setLanguage(pref) {
   for (const t of tiles.values()) t.relabel();
   renderSizePicker();
   updateControls();
+  refreshJoinLabel();
+  sendTray();
   setPeoplePanel(!$('#room').classList.contains('collapsed'));
   if (document.body.dataset.view === 'room') {
     document.title = tr('GameShare · Room {code}', { code: state.code });
@@ -3552,18 +3619,363 @@ function setLanguage(pref) {
   pushOverlay();
 }
 
+/* ------------------------------------------------------------ shortcuts
+ * Combos are text like "Ctrl+Shift+M" ("Ctrl" also means Cmd on a Mac). The
+ * key names are the ones Electron's global shortcuts understand. */
+
+function keyFromCode(code) {
+  let m;
+  if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
+  if ((m = /^Digit(\d)$/.exec(code))) return m[1];
+  if ((m = /^F(\d{1,2})$/.exec(code)) && Number(m[1]) >= 1 && Number(m[1]) <= 24) return 'F' + m[1];
+  if ((m = /^Numpad(\d)$/.exec(code))) return 'num' + m[1];
+  return {
+    Space: 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+    Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', Insert: 'Insert', Delete: 'Delete',
+    CapsLock: 'Capslock', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+    Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`'
+  }[code] || null;
+}
+
+function comboFromEvent(e) {
+  const k = keyFromCode(e.code);
+  if (!k) return null;
+  const parts = [];
+  if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  parts.push(k);
+  return parts.join('+');
+}
+
+const withKeys = (text, combo) => (combo ? `${text} (${combo})` : text);
+const escOr = () => (prefs.keys.cinema ? tr('Esc or {keys}', { keys: prefs.keys.cinema }) : 'Esc');
+const accelOf = (combo) => combo.replace(/^Ctrl(?=\+)/, 'CommandOrControl');
+const isTyping = (n) => !!(n && n.tagName === 'INPUT' && !['range', 'checkbox'].includes(n.type));
+
+let keyCapture = null; // { action } while Settings waits for the new keys
+let swallowUp = null;  // the key that ended a capture: its release does nothing
+
+function renderKeys() {
+  for (const b of document.querySelectorAll('.key-btn')) {
+    const a = b.dataset.key;
+    const combo = a === 'ptt' ? prefs.pttKey : prefs.keys[a];
+    const listening = !!keyCapture && keyCapture.action === a;
+    b.classList.toggle('listening', listening);
+    b.classList.toggle('unset', !combo && !listening);
+    b.textContent = listening ? tr('Press keys…') : combo || tr('Not set');
+  }
+}
+
+function startKeyCapture(action) {
+  keyCapture = { action };
+  // So the keys being replaced reach the page instead of toggling mute.
+  window.gameshare.setShortcuts(false).catch(() => {});
+  state.globalKeys = [];
+  renderKeys();
+}
+
+function endKeyCapture() {
+  if (!keyCapture) return;
+  keyCapture = null;
+  renderKeys();
+  applyGlobalKeys();
+}
+
+function setKey(action, combo) {
+  if (combo) {
+    if (action !== 'ptt' && !/^(Ctrl|Alt)\+|^(Shift\+)?F\d/.test(combo)) {
+      toast(tr('Use Ctrl or Alt with a key, or an F key.'), 'warn');
+      return;
+    }
+    const all = { ...prefs.keys, ptt: prefs.pttKey };
+    if (Object.keys(all).some((k) => k !== action && all[k] === combo)) {
+      toast(tr('Those keys are already used for something else.'), 'warn');
+      return;
+    }
+  }
+  if (action === 'ptt') prefs.pttKey = combo; else prefs.keys[action] = combo;
+  savePrefs();
+  endKeyCapture();
+  updateControls();
+  setPeoplePanel(!$('#room').classList.contains('collapsed'));
+  for (const t of tiles.values()) t.relabel(); // the cinema button names its keys
+  if (action === 'ptt') applyPtt();
+}
+
+function captureKey(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+  swallowUp = e.code;
+  if (e.key === 'Escape') { endKeyCapture(); return; }
+  if (e.key === 'Backspace') { setKey(keyCapture.action, ''); return; }
+  const combo = comboFromEvent(e);
+  if (!combo) { toast(tr('That key can’t be used. Try another.'), 'warn'); return; }
+  setKey(keyCapture.action, combo);
+}
+
+/* ------------------------------------------------------------ push-to-talk
+ * With it on, your mic is live only while you hold the key (the Mute button
+ * still mutes you outright). On Windows a small helper (native/keys.cpp)
+ * watches the key so it works while a game has focus; elsewhere it works
+ * while GameShare is in front. */
+
+const ptt = { held: false, global: false, release: null };
+const pttOn = () => prefs.ptt === true && !!prefs.pttKey;
+const micLive = () => !state.muted && (!pttOn() || ptt.held);
+
+function applyMicEnabled() {
+  if (state.mic) state.mic.getAudioTracks().forEach((t) => { t.enabled = micLive(); });
+}
+
+function pttSet(down) {
+  if (!pttOn() || document.body.dataset.view !== 'room') down = false;
+  clearTimeout(ptt.release);
+  ptt.release = null;
+  const set = (v) => {
+    if (ptt.held === v) return;
+    ptt.held = v;
+    applyMicEnabled();
+    const b = $('#micBtn');
+    b.classList.toggle('talking', v && !state.muted);
+  };
+  // A short tail on release so the end of a word isn't cut off.
+  if (down) set(true); else if (ptt.held) ptt.release = setTimeout(() => set(false), 180);
+}
+
+async function applyPtt() {
+  const on = pttOn() && document.body.dataset.view === 'room';
+  ptt.global = false;
+  clearTimeout(ptt.release);
+  ptt.release = null;
+  ptt.held = false;
+  try {
+    if (on) ptt.global = !!(await window.gameshare.pttStart(prefs.pttKey));
+    else await window.gameshare.pttStop();
+  } catch { /* stays an in-window key */ }
+  applyMicEnabled();
+  updateControls();
+  syncMutedWatch();
+}
+
+/* ------------------------------------------------------------ talking while muted
+ * While you're muted, a copy of the raw mic is watched (never sent anywhere):
+ * if you keep talking, the mic button pulses and a note reminds you. */
+
+const mutedWatch = { from: null, track: null, source: null, analyser: null, data: null, timer: null, since: 0, last: 0, told: -1e9 };
+
+function stopMutedWatch() {
+  clearInterval(mutedWatch.timer);
+  try { mutedWatch.source && mutedWatch.source.disconnect(); } catch { /* ignore */ }
+  if (mutedWatch.track) mutedWatch.track.stop();
+  mutedWatch.from = mutedWatch.track = mutedWatch.source = mutedWatch.analyser = mutedWatch.timer = null;
+  mutedWatch.since = 0;
+  $('#micBtn').classList.remove('nudge');
+}
+
+function syncMutedWatch() {
+  const want = state.muted && !pttOn() && !!mic.raw && document.body.dataset.view === 'room';
+  if (!want) { if (mutedWatch.track) stopMutedWatch(); return; }
+  if (mutedWatch.from === mic.raw) return;
+  stopMutedWatch();
+  const src = mic.raw.getAudioTracks()[0];
+  if (!src) return;
+  try {
+    const track = src.clone();
+    track.enabled = true;
+    const source = ctx().createMediaStreamSource(new MediaStream([track]));
+    const analyser = ctx().createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    Object.assign(mutedWatch, { from: mic.raw, track, source, analyser, data: new Float32Array(analyser.fftSize), since: 0, last: 0 });
+    mutedWatch.timer = setInterval(tickMutedWatch, 150);
+  } catch (e) { console.warn('muted watch', e); }
+}
+
+function tickMutedWatch() {
+  const w = mutedWatch;
+  if (!w.analyser) return;
+  w.analyser.getFloatTimeDomainData(w.data);
+  let sum = 0;
+  for (let i = 0; i < w.data.length; i++) sum += w.data[i] * w.data[i];
+  const now = performance.now();
+  if (Math.sqrt(sum / w.data.length) > 0.06) {
+    if (!w.since || now - w.last > 400) w.since = now; // a new burst
+    w.last = now;
+  } else if (now - w.last > 400) {
+    w.since = 0;
+  }
+  const talking = !!w.since && now - w.since > 700;
+  $('#micBtn').classList.toggle('nudge', talking || now - w.told < 2500);
+  if (talking && now - w.told > 45000) {
+    w.told = now;
+    toast(withKeysHint(tr('You’re muted. Friends can’t hear you.')), 'warn');
+  }
+}
+const withKeysHint = (text) => (prefs.keys.mute ? `${text} ${tr('Press {keys} to unmute.', { keys: prefs.keys.mute })}` : text);
+
+/* ------------------------------------------------------------ mic test (start screen)
+ * Opens your mic only while the test is showing, so you can see it works
+ * (and pick another) before friends hear silence. */
+
+const lobbyMic = { stream: null, source: null, timer: null, seq: 0 };
+
+function stopLobbyMicStream() {
+  clearInterval(lobbyMic.timer);
+  try { lobbyMic.source && lobbyMic.source.disconnect(); } catch { /* ignore */ }
+  if (lobbyMic.stream) lobbyMic.stream.getTracks().forEach((t) => t.stop());
+  lobbyMic.stream = lobbyMic.source = lobbyMic.timer = null;
+  $('#lobbyMicLevel').style.setProperty('--lvl', '0');
+}
+
+function closeLobbyMic() {
+  lobbyMic.seq++;
+  stopLobbyMicStream();
+  $('#micTestBox').classList.add('hidden');
+  $('#micTestBtn').setAttribute('aria-expanded', 'false');
+}
+
+async function startLobbyMic() {
+  const seq = ++lobbyMic.seq;
+  stopLobbyMicStream();
+  $('#micTestBox').classList.remove('hidden');
+  $('#micTestBtn').setAttribute('aria-expanded', 'true');
+  const hint = $('#micTestHint');
+  hint.textContent = tr('Starting your microphone…');
+  const audio = { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+  let stream = null;
+  try {
+    if (prefs.micId) {
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: prefs.micId } }, video: false }); } catch { /* unplugged: use the default */ }
+    }
+    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+  } catch (e) {
+    console.warn('mic test', e);
+    if (seq === lobbyMic.seq) hint.textContent = tr('No microphone found. Check that it’s plugged in and allowed.');
+    return;
+  }
+  if (seq !== lobbyMic.seq) { stream.getTracks().forEach((t) => t.stop()); return; }
+  lobbyMic.stream = stream;
+  hint.textContent = tr('Talk: the bar should move.');
+  refreshDevices();
+  try {
+    const source = ctx().createMediaStreamSource(stream);
+    const analyser = ctx().createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    lobbyMic.source = source;
+    const data = new Float32Array(analyser.fftSize);
+    let heard = 0;
+    lobbyMic.timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      const rms = Math.sqrt(sum / data.length);
+      $('#lobbyMicLevel').style.setProperty('--lvl', String(clamp((20 * Math.log10(rms + 1e-9) + 60) / 50, 0, 1)));
+      if (rms > 0.035 && ++heard === 3) hint.textContent = tr('Sounds good. Friends will hear you.');
+    }, 100);
+  } catch (e) { console.warn('mic test meter', e); }
+}
+
+/* ------------------------------------------------------------ dialogs and focus
+ * Opening the share picker, Settings or a player's menu moves keyboard focus
+ * into it, Tab stays inside, and closing puts focus back where it was. */
+
+const focusBack = new Map(); // dialog element -> what had focus before it opened
+const FOCUSABLE = 'button, select, input, [tabindex]';
+
+function focusables(box) {
+  return [...box.querySelectorAll(FOCUSABLE)].filter((n) => !n.disabled && n.tabIndex >= 0 && n.getClientRects().length > 0);
+}
+
+function dialogOpened(box, first) {
+  if (!focusBack.has(box)) focusBack.set(box, document.activeElement);
+  const target = first || focusables(box)[0];
+  if (target) target.focus({ preventScroll: true });
+}
+
+function dialogClosed(box) {
+  if (!focusBack.has(box)) return;
+  const back = focusBack.get(box);
+  focusBack.delete(box);
+  const a = document.activeElement;
+  if ((!a || a === document.body || box.contains(a)) && back && back.isConnected && back.focus) back.focus({ preventScroll: true });
+}
+
+function openDialog() {
+  for (const id of ['#picker', '#settingsMenu', '#soundMenu', '#personMenu']) {
+    const box = $(id);
+    if (!box.classList.contains('hidden')) return box;
+  }
+  return null;
+}
+
+function trapTab(e, box) {
+  const list = focusables(box);
+  if (!list.length) { e.preventDefault(); return; }
+  const first = list[0], last = list[list.length - 1];
+  const a = document.activeElement;
+  if (!box.contains(a)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+}
+
+// Left/Right (and Home/End) move between tabs, like any tab strip.
+function tabKeys(strip, pick) {
+  strip.addEventListener('keydown', (e) => {
+    const tabs = [...strip.querySelectorAll('[role="tab"]')];
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const j = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i + tabs.length - 1) % tabs.length
+      : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    pick(tabs[j]);
+    tabs[j].focus();
+  });
+}
+
 /* ------------------------------------------------------------ room flow */
 
 function lobbyStatus(text, kind = '') {
   const s = $('#lobbyStatus');
   s.textContent = text;
-  s.className = 'status ' + kind;
+  s.className = 'status ' + kind + (lobbyBusy && !kind && text ? ' busy' : '');
 }
 
-function setLobbyBusy(busy) {
+// While joining, the Join button turns into Cancel.
+let lobbyBusy = false;
+let joinSeq = 0;       // bumped by every join and every cancel
+let joinPhase = null;  // 'setup' (mic, server) or 'waiting' (for the room to answer)
+function setLobbyBusy(busy, cancellable = false) {
+  lobbyBusy = busy;
+  if (!busy) joinPhase = null;
   $('#createBtn').disabled = busy;
-  $('#joinBtn').disabled = busy;
   $('#rejoinBtn').disabled = busy;
+  $('#joinBtn').disabled = busy && !cancellable;
+  refreshJoinLabel();
+  if (!busy) $('#lobbyStatus').classList.remove('busy');
+}
+function refreshJoinLabel() {
+  const b = $('#joinBtn');
+  const cancel = lobbyBusy && !b.disabled;
+  b.firstChild.nodeValue = cancel ? tr('Cancel') : tr('Join');
+  b.classList.toggle('cancel', cancel);
+}
+
+function cancelJoin() {
+  if (!lobbyBusy || !joinPhase) return;
+  joinSeq++;
+  if (joinPhase === 'waiting') {
+    leave(true);
+    lobbyStatus(tr('Cancelled.'));
+  } else {
+    // Still opening the mic or reaching the server: joinRoom() tidies up when that returns.
+    $('#joinBtn').disabled = true;
+    refreshJoinLabel();
+    lobbyStatus(tr('Cancelling…'));
+  }
 }
 
 function renderRejoin() {
@@ -3645,6 +4057,7 @@ function wirePeer(peer) {
 async function prepare() {
   const name = $('#nameInput').value.trim();
   if (!name) { lobbyStatus(tr('Pick a name first.'), 'err'); $('#nameInput').focus(); return false; }
+  closeLobbyMic(); // the test let go of the mic, so the call's own settings apply
   state.name = name.slice(0, 24);
   try { localStorage.setItem('gs-name', state.name); } catch { /* ignore */ }
   state.leaving = false;
@@ -3654,7 +4067,7 @@ async function prepare() {
   const r = state.resume;
   state.muted = !!(r && r.muted);
   if (r) state.deafened = !!r.deafened;
-  state.mic.getAudioTracks().forEach((t) => { t.enabled = !state.muted; });
+  state.mic.getAudioTracks().forEach((t) => { t.enabled = micLive(); });
   watchLevel('me', state.mic);
   return true;
 }
@@ -3700,10 +4113,22 @@ async function createRoom(fixedCode) {
 async function joinRoom(opts) {
   const code = $('#codeInput').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 6) { lobbyStatus(tr('Room codes are 6 characters.'), 'err'); $('#codeInput').focus(); return; }
+  if (lobbyBusy) return;
   const r = state.resume;
-  setLobbyBusy(true);
+  const seq = ++joinSeq;
+  // Cancelled while the mic or the server was still being set up: undo that.
+  const cancelled = () => {
+    if (seq === joinSeq) return false;
+    cleanupMedia();
+    setLobbyBusy(false);
+    lobbyStatus(tr('Cancelled.'));
+    return true;
+  };
+  setLobbyBusy(true, true);
+  joinPhase = 'setup';
   lobbyStatus(r ? tr('Getting you back into room {code}…', { code }) : opts && opts.rejoin ? tr('Rejoining room {code}…', { code }) : tr('Joining…'));
   if (!(await prepare())) { setLobbyBusy(false); return; }
+  if (cancelled()) return;
   // Back after a restart: the same player ID, so friends see me come back
   // instead of a second me joining.
   const reuse = r && typeof r.peerId === 'string' && !r.peerId.startsWith(ROOM_PREFIX) ? r.peerId : undefined;
@@ -3714,11 +4139,14 @@ async function joinRoom(opts) {
     });
   } catch (e) {
     console.warn(e);
+    if (cancelled()) return;
     cleanupMedia();
     setLobbyBusy(false);
     lobbyStatus(tr('Couldn’t reach the connection server. Check your internet and try again.'), 'err');
     return;
   }
+  if (seq !== joinSeq) { try { state.peer.destroy(); } catch { /* ignore */ } state.peer = null; cancelled(); return; }
+  joinPhase = 'waiting';
   state.code = code;
   state.isHost = false;
   state.rejoinCode = opts && opts.rejoin ? code : null;
@@ -3775,6 +4203,7 @@ function enterRoom() {
   renderPeople();
   layoutStage();
   applyGlobalKeys();
+  applyPtt();
   clearInterval(netTimer);
   netTimer = setInterval(pollNet, 3000);
   clearInterval(healTimer);
@@ -3795,6 +4224,8 @@ function leave(silent = false) {
   // wait for me to reconnect.
   const sayBye = !!state.peer && !state.leaving && document.body.dataset.view === 'room';
   state.leaving = true;
+  disarmLeave();
+  endKeyCapture();
   clearTimeout(state.joinTimer);
   clearTimeout(state.claim);
   state.claim = null;
@@ -3842,14 +4273,68 @@ function leave(silent = false) {
   setLobbyBusy(false);
   renderRejoin();
   pushOverlay();
+  applyPtt(); // stops watching the push-to-talk key and the muted-mic reminder
   if (!silent) lobbyStatus(tr('You left the room.'));
+}
+
+// The Leave button. While you're sharing it asks for a second click (a slip
+// would end the stream for everyone); otherwise it leaves at once and offers
+// a way straight back.
+let leaveArm = null;
+function disarmLeave() {
+  clearTimeout(leaveArm);
+  leaveArm = null;
+  const b = $('#leaveBtn');
+  b.classList.remove('armed');
+  b.dataset.label = tr('Leave');
+  b.title = tr('Leave the room');
+}
+function askLeave() {
+  if (state.screen && !leaveArm) {
+    const b = $('#leaveBtn');
+    b.classList.add('armed');
+    b.dataset.label = tr('Sure?');
+    b.title = tr('Click again to stop sharing and leave');
+    toast(tr('You’re sharing your screen. Click Leave again to stop sharing and leave.'), 'warn', { ms: 4000 });
+    leaveArm = setTimeout(disarmLeave, 4000);
+    return;
+  }
+  const code = state.code;
+  leave();
+  if (code) toast(tr('You left room {code}.', { code }), '', { ms: 9000, action: { label: tr('Undo'), run: () => goJoin(code, true) } });
+}
+
+// Put a code in the box and join (from Undo, or an invite link).
+function goJoin(code, rejoin) {
+  if (document.body.dataset.view !== 'lobby' || lobbyBusy) return;
+  $('#codeInput').value = code;
+  if (!$('#nameInput').value.trim()) {
+    lobbyStatus(tr('Type your name, then press Join.'));
+    $('#nameInput').focus();
+    return;
+  }
+  joinRoom(rejoin ? { rejoin: true } : undefined);
+}
+
+// A gameshare://join/CODE link was opened (clicked in a browser or chat).
+function handleJoinLink(raw) {
+  const code = String(raw || '').toUpperCase();
+  if (!new RegExp(`^[${CODE_ALPHABET}]{6}$`).test(code)) return;
+  if (document.body.dataset.view === 'room') {
+    if (code === state.code) return;
+    toast(tr('You were invited to room {code}.', { code }), '', {
+      ms: 20000, action: { label: tr('Join'), run: () => { leave(true); goJoin(code); } }
+    });
+    return;
+  }
+  goJoin(code);
 }
 
 function setPeoplePanel(show) {
   $('#room').classList.toggle('collapsed', !show);
   const b = $('#peopleToggle');
   b.setAttribute('aria-pressed', String(show));
-  b.title = show ? tr('Collapse the panel (Ctrl+Shift+P)') : tr('Expand the panel (Ctrl+Shift+P)');
+  b.title = withKeys(show ? tr('Collapse the panel') : tr('Expand the panel'), prefs.keys.panel);
   prefs.people = show;
   savePrefs();
   closePersonMenu();
@@ -3859,7 +4344,8 @@ function setPeoplePanel(show) {
 function toggleMute() {
   if (!state.mic || document.body.dataset.view !== 'room') return;
   state.muted = !state.muted;
-  state.mic.getAudioTracks().forEach((t) => { t.enabled = !state.muted; });
+  applyMicEnabled();
+  syncMutedWatch();
   cue(state.muted ? 'mute' : 'unmute');
   broadcast(myState());
   remember();
@@ -3869,15 +4355,20 @@ function toggleMute() {
 }
 
 async function copyInvite() {
-  const text = tr('Join me on GameShare! Room code: {code}', { code: state.code });
+  // The link opens GameShare straight in the room; pasting the whole message in the code box works too.
+  const link = INVITE_PAGE ? `${INVITE_PAGE}#${state.code}` : `gameshare://join/${state.code}`;
+  const text = `${tr('Join me on GameShare! Room code: {code}', { code: state.code })}\n${link}`;
   try { await navigator.clipboard.writeText(text); toast(tr('Invite copied. Paste it to your friends.'), 'ok'); }
   catch { toast(tr('Room code: {code}', { code: state.code })); }
 }
 
 // System-wide mute shortcuts: only while in a room, and only if wanted.
 function applyGlobalKeys() {
+  if (keyCapture) return; // re-applied when the capture ends
   const on = prefs.globalKeys !== false && document.body.dataset.view === 'room';
-  window.gameshare.setShortcuts(on).then((ok) => { state.globalKeys = ok || []; }).catch(() => { state.globalKeys = []; });
+  const map = {};
+  for (const a of ['mute', 'deafen']) if (prefs.keys[a]) map[a] = accelOf(prefs.keys[a]);
+  window.gameshare.setShortcuts(on, map).then((ok) => { state.globalKeys = ok || []; }).catch(() => { state.globalKeys = []; });
 }
 
 /* ------------------------------------------------------------ settings menu */
@@ -3890,11 +4381,38 @@ function openSettings() {
   micMeterOn = true;
   $('#settingsMenu').classList.remove('hidden');
   $('#settingsBtn').setAttribute('aria-expanded', 'true');
+  showSettingsTab(prefs.settingsTab);
+  dialogOpened($('#settingsMenu'), $('#settingsMenu .menu-tab[aria-selected="true"]'));
 }
 function closeSettings() {
   micMeterOn = false;
+  endKeyCapture();
   $('#settingsMenu').classList.add('hidden');
   $('#settingsBtn').setAttribute('aria-expanded', 'false');
+  dialogClosed($('#settingsMenu'));
+}
+// Settings is split into pages; it reopens on the one you used last.
+function showSettingsTab(name) {
+  const tabs = [...document.querySelectorAll('#settingsMenu .menu-tab')];
+  if (!tabs.some((t) => t.dataset.page === name)) name = 'voice';
+  for (const t of tabs) {
+    const on = t.dataset.page === name;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    $('#page-' + t.dataset.page).classList.toggle('hidden', !on);
+  }
+  if (keyCapture && name !== 'keys') endKeyCapture();
+  if (prefs.settingsTab !== name) { prefs.settingsTab = name; savePrefs(); }
+}
+
+// The tray option and the words for its menu (the main process has no translations).
+function sendTray() {
+  try {
+    window.gameshare.tray({ on: prefs.tray === true, labels: {
+      open: tr('Open GameShare'), quit: tr('Leave and quit'),
+      still: tr('GameShare is still running. You’re still in the room.')
+    } });
+  } catch { /* ignore */ }
 }
 
 /* ------------------------------------------------------------ wiring */
@@ -4099,7 +4617,18 @@ function init() {
   if (!$('#nameInput').value) $('#nameInput').focus();
 
   $('#createBtn').addEventListener('click', () => createRoom());
-  $('#joinBtn').addEventListener('click', () => joinRoom());
+  $('#joinBtn').addEventListener('click', () => (lobbyBusy ? cancelJoin() : joinRoom()));
+  $('#micTestBtn').addEventListener('click', () => {
+    if ($('#micTestBox').classList.contains('hidden')) startLobbyMic(); else closeLobbyMic();
+  });
+  $('#lobbyMicSelect').addEventListener('change', (e) => {
+    prefs.micId = e.target.value;
+    savePrefs();
+    startLobbyMic();
+  });
+  window.gameshare.onJoinLink(handleJoinLink);
+  window.gameshare.takeJoinLink().then((code) => { if (code && !state.resume) handleJoinLink(code); }).catch(() => {});
+  sendTray();
   $('#rejoinBtn').addEventListener('click', () => {
     if (!prefs.lastRoom) return;
     $('#codeInput').value = prefs.lastRoom.code;
@@ -4115,10 +4644,10 @@ function init() {
     e.preventDefault();
     e.target.value = code || text.replace(/[^A-Z0-9]/g, '').slice(0, 6);
   });
-  $('#codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
+  $('#codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !lobbyBusy) joinRoom(); });
   // Enter in the name box joins if a code is typed, otherwise creates a room.
   $('#nameInput').addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
+    if (e.key !== 'Enter' || lobbyBusy) return;
     if ($('#codeInput').value.length === 6) joinRoom(); else createRoom();
   });
 
@@ -4207,6 +4736,41 @@ function init() {
       applyOutput();
     });
   }
+  // Settings pages
+  for (const t of document.querySelectorAll('#settingsMenu .menu-tab')) t.addEventListener('click', () => showSettingsTab(t.dataset.page));
+  tabKeys($('#settingsMenu .menu-tabs'), (t) => showSettingsTab(t.dataset.page));
+  tabKeys($('#picker .tabs'), (t) => { pickerKind = t.dataset.kind; renderSources(); });
+  // Shortcuts: click one, then press the new keys
+  for (const b of document.querySelectorAll('.key-btn')) {
+    b.addEventListener('click', () => {
+      if (keyCapture && keyCapture.action === b.dataset.key) endKeyCapture(); else { endKeyCapture(); startKeyCapture(b.dataset.key); }
+    });
+  }
+  $('#keysReset').addEventListener('click', () => {
+    endKeyCapture();
+    prefs.keys = { ...DEFAULT_KEYS };
+    if (Object.values(prefs.keys).includes(prefs.pttKey)) prefs.pttKey = '';
+    savePrefs();
+    updateControls();
+    setPeoplePanel(!$('#room').classList.contains('collapsed'));
+    for (const t of tiles.values()) t.relabel();
+    applyGlobalKeys();
+    applyPtt();
+  });
+  $('#pttBtn').addEventListener('click', () => {
+    prefs.ptt = prefs.ptt !== true;
+    savePrefs();
+    updateControls();
+    applyPtt();
+    if (prefs.ptt && !prefs.pttKey) startKeyCapture('ptt');
+  });
+  $('#trayBtn').addEventListener('click', () => {
+    prefs.tray = prefs.tray !== true;
+    savePrefs();
+    updateControls();
+    sendTray();
+  });
+  window.gameshare.onPtt((down) => { if (ptt.global) pttSet(!!down); });
   $('#globalKeysBtn').addEventListener('click', () => {
     prefs.globalKeys = prefs.globalKeys === false;
     savePrefs();
@@ -4265,7 +4829,7 @@ function init() {
   $('#peopleToggle').addEventListener('click', () => setPeoplePanel($('#room').classList.contains('collapsed')));
   setPeoplePanel(prefs.people !== false);
   $('#shareBtn').addEventListener('click', () => (state.screen ? stopShare() : startShare()));
-  $('#leaveBtn').addEventListener('click', () => leave());
+  $('#leaveBtn').addEventListener('click', askLeave);
   $('#copyBtn').addEventListener('click', copyInvite);
   $('#inviteCode').addEventListener('click', copyInvite);
   $('#inviteCopy').addEventListener('click', copyInvite);
@@ -4318,7 +4882,17 @@ function init() {
 
   new ResizeObserver(scheduleLayout).observe($('#stage'));
 
+  // Choosing a new shortcut in Settings: the next keys pressed are the answer.
+  document.addEventListener('keydown', (e) => { if (keyCapture) captureKey(e); }, true);
+  document.addEventListener('pointerdown', (e) => {
+    if (!keyCapture) return;
+    const side = e.button === 3 ? 'Mouse4' : e.button === 4 ? 'Mouse5' : null;
+    if (side && keyCapture.action === 'ptt') { e.preventDefault(); setKey('ptt', side); }
+    else if (!(e.target.closest && e.target.closest('.key-btn'))) endKeyCapture();
+  }, true);
+
   document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return; // a shortcut being chosen
     const pickerOpen = !$('#picker').classList.contains('hidden');
     if (e.key === 'Escape') {
       const busy = pickerOpen || !$('#settingsMenu').classList.contains('hidden') || !$('#soundMenu').classList.contains('hidden');
@@ -4328,16 +4902,41 @@ function init() {
       closePersonMenu();
       if (state.cinema && !busy && !document.fullscreenElement) setCinema(null);
     }
-    if (e.key === 'Enter' && pickerOpen && pickerSelected && !e.repeat) { e.preventDefault(); goPicker(); }
-    const inRoom = document.body.dataset.view === 'room';
-    if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || !inRoom) return;
-    const k = e.key.toLowerCase();
+    if (e.key === 'Tab') { const box = openDialog(); if (box) trapTab(e, box); }
+    if (e.key === 'Enter' && pickerOpen && pickerSelected && !e.repeat && !(e.target.closest && e.target.closest('.modal-foot, .tabs'))) { e.preventDefault(); goPicker(); }
+    if (document.body.dataset.view !== 'room') return;
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    if (pttOn() && !ptt.global && combo === prefs.pttKey && !isTyping(e.target)) {
+      e.preventDefault();
+      if (!e.repeat) pttSet(true);
+      return;
+    }
     // When registered system-wide these arrive through onShortcut instead.
-    if (k === 'm' && !state.globalKeys.includes('mute')) { e.preventDefault(); toggleMute(); }
-    if (k === 'd' && !state.globalKeys.includes('deafen')) { e.preventDefault(); toggleDeafen(); }
-    if (k === 'p') { e.preventDefault(); setPeoplePanel($('#room').classList.contains('collapsed')); }
-    if (k === 'c') { e.preventDefault(); toggleCinema(); }
+    const K = prefs.keys;
+    if (combo === K.mute && !state.globalKeys.includes('mute')) { e.preventDefault(); if (!e.repeat) toggleMute(); }
+    else if (combo === K.deafen && !state.globalKeys.includes('deafen')) { e.preventDefault(); if (!e.repeat) toggleDeafen(); }
+    else if (combo === K.panel) { e.preventDefault(); if (!e.repeat) setPeoplePanel($('#room').classList.contains('collapsed')); }
+    else if (combo === K.cinema) { e.preventDefault(); if (!e.repeat) toggleCinema(); }
   });
+
+  // Push-to-talk while GameShare is in front (in games on Windows the helper reports the key).
+  document.addEventListener('keyup', (e) => {
+    if (swallowUp && e.code === swallowUp) { swallowUp = null; e.preventDefault(); return; }
+    if (!pttOn() || ptt.global || !ptt.held) return;
+    const parts = prefs.pttKey.split('+');
+    const mod = { Control: 'Ctrl', Meta: 'Ctrl', Alt: 'Alt', Shift: 'Shift' }[e.key];
+    if (keyFromCode(e.code) === parts[parts.length - 1] || (mod && parts.includes(mod))) { e.preventDefault(); pttSet(false); }
+  });
+  for (const [type, down] of [['mousedown', true], ['mouseup', false]]) {
+    document.addEventListener(type, (e) => {
+      const side = e.button === 3 ? 'Mouse4' : e.button === 4 ? 'Mouse5' : null;
+      if (!side || !pttOn() || ptt.global || side !== prefs.pttKey) return;
+      e.preventDefault();
+      pttSet(down);
+    });
+  }
+  window.addEventListener('blur', () => { if (!ptt.global) pttSet(false); });
 
   // Closing the window while in a room: the main process waits a moment so
   // the goodbye goes out (otherwise friends would see "Reconnecting…").

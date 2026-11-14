@@ -1,6 +1,6 @@
 // GameShare — Electron main process
 const { app, BrowserWindow, desktopCapturer, session, ipcMain, shell, systemPreferences,
-        globalShortcut, nativeTheme, screen, MessageChannelMain } = require('electron');
+        globalShortcut, nativeTheme, screen, MessageChannelMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -86,7 +86,7 @@ function createWindow() {
   for (const ev of ['minimize', 'restore', 'hide', 'show']) win.on(ev, sendVis);
 
   // The in-game overlay shows only while GameShare itself isn't in front.
-  for (const ev of ['focus', 'blur', 'minimize', 'restore']) win.on(ev, () => syncOverlay());
+  for (const ev of ['focus', 'blur', 'minimize', 'restore', 'hide', 'show']) win.on(ev, () => syncOverlay());
   win.on('closed', () => { if (overlay && !overlay.isDestroyed()) overlay.destroy(); overlay = null; });
 
   let saveTimer = null;
@@ -104,6 +104,15 @@ function createWindow() {
     saveWindowState();
     if (w.gsCloseOk || !inRoom.has(wcId) || w.webContents.isCrashed()) return;
     e.preventDefault();
+    // "Keep running when I close the window": stay in the call, tucked into the tray.
+    if (trayPref && !quitting && ensureTray()) {
+      w.hide();
+      if (!trayTold && process.platform === 'win32') {
+        trayTold = true;
+        try { tray.displayBalloon({ title: 'GameShare', content: trayLabels.still, iconType: 'info' }); } catch { /* ignore */ }
+      }
+      return;
+    }
     w.webContents.send('app-closing');
     setTimeout(() => closeNow(w), 1500); // the page didn't answer: close anyway
   });
@@ -115,10 +124,13 @@ function createWindow() {
     if (details.reason === 'clean-exit' || w.isDestroyed()) return;
     console.warn('GameShare page stopped:', details.reason);
     inRoom.delete(wcId);
+    syncTray();
     overlayOn = false;
     syncOverlay();
     stopAppAudio();
-    for (const accel of Object.values(SHORTCUTS)) { try { globalShortcut.unregister(accel); } catch { /* ignore */ } }
+    stopPtt();
+    for (const accel of registered) { try { globalShortcut.unregister(accel); } catch { /* ignore */ } }
+    registered = [];
     const now = Date.now();
     crashes = crashes.filter((t) => now - t < 120000);
     crashes.push(now);
@@ -142,7 +154,71 @@ function closeNow(w) {
   if (quitting) setImmediate(() => app.quit()); // the goodbye had paused a quit
 }
 
-ipcMain.on('in-room', (e, on) => { if (on) inRoom.add(e.sender.id); else inRoom.delete(e.sender.id); });
+ipcMain.on('in-room', (e, on) => {
+  if (on) inRoom.add(e.sender.id); else inRoom.delete(e.sender.id);
+  syncTray();
+});
+
+/* ------------------------------------------------------------ tray
+ * Optional (Settings > App): while you're in a room, closing the window hides
+ * GameShare in the tray instead of leaving. The icon is only there during a
+ * call; its menu opens the window again or leaves and quits. */
+let tray = null;
+let trayPref = false;
+let trayTold = false; // the "still running" balloon is shown once per run
+let trayLabels = { open: 'Open GameShare', quit: 'Leave and quit', still: 'GameShare is still running. You’re still in the room.' };
+
+function showWindow() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function ensureTray() {
+  if (tray && !tray.isDestroyed()) return tray;
+  try {
+    const size = process.platform === 'darwin' ? 18 : 32;
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: size, height: size });
+    tray = new Tray(icon);
+    tray.setToolTip('GameShare');
+    tray.on('click', showWindow);
+    setTrayMenu();
+    return tray;
+  } catch (e) {
+    console.warn('GameShare tray unavailable:', e.message);
+    tray = null;
+    return null; // no tray on this system: closing leaves as usual
+  }
+}
+
+function setTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: trayLabels.open, click: showWindow },
+    { type: 'separator' },
+    { label: trayLabels.quit, click: () => app.quit() }
+  ]));
+}
+
+function syncTray() {
+  const want = trayPref && inRoom.size > 0;
+  if (want) { ensureTray(); return; }
+  if (tray && !tray.isDestroyed()) tray.destroy();
+  tray = null;
+  // Never leave a hidden window with no way back to it.
+  if (win && !win.isDestroyed() && !win.isVisible() && !quitting) win.show();
+}
+
+ipcMain.on('tray', (_e, msg) => {
+  trayPref = !!(msg && msg.on);
+  const l = msg && msg.labels;
+  if (l && typeof l === 'object') {
+    for (const k of Object.keys(trayLabels)) if (typeof l[k] === 'string' && l[k]) trayLabels[k] = l[k].slice(0, 200);
+    setTrayMenu();
+  }
+  syncTray();
+});
 ipcMain.on('close-now', (e) => closeNow(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.on('attention', (e) => {
   const w = BrowserWindow.fromWebContents(e.sender);
@@ -156,12 +232,48 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 // One GameShare at a time: opening it again brings the running one to the
 // front (two copies would fight over the microphone and join twice).
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', () => {
-  if (!win || win.isDestroyed()) return;
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
+app.on('second-instance', (_e, argv) => {
+  showWindow();
+  openJoinLink(linkIn(argv));
 });
+
+/* ------------------------------------------------------------ invite links
+ * gameshare://join/ABC123 opens GameShare (or brings the running one to the
+ * front) and joins that room. */
+let pendingJoin = null; // a link that arrived before the page was ready
+
+function linkIn(argv) {
+  for (const a of argv || []) {
+    const m = /^gameshare:\/\/join\/([A-Za-z0-9]{6})\/?$/.exec(String(a));
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
+
+function openJoinLink(code) {
+  if (!code) return;
+  if (win && !win.isDestroyed() && !win.webContents.isLoading()) win.webContents.send('join-link', code);
+  else pendingJoin = code;
+}
+
+try {
+  if (process.defaultApp) {
+    // `npm start`: register electron + this folder
+    if (process.argv.length >= 2) app.setAsDefaultProtocolClient('gameshare', process.execPath, [path.resolve(process.argv[1])]);
+  } else if (process.env.PORTABLE_EXECUTABLE_FILE) {
+    app.setAsDefaultProtocolClient('gameshare', process.env.PORTABLE_EXECUTABLE_FILE); // the portable .exe itself
+  } else {
+    app.setAsDefaultProtocolClient('gameshare');
+  }
+} catch (e) { console.warn('GameShare: could not register gameshare:// links:', e.message); }
+
+pendingJoin = linkIn(process.argv);
+app.on('open-url', (e, url) => { // macOS
+  e.preventDefault();
+  showWindow();
+  openJoinLink(linkIn([url]));
+});
+ipcMain.handle('join-link-take', () => { const c = pendingJoin; pendingJoin = null; return c; });
 
 app.whenReady().then(async () => {
   const ses = session.defaultSession;
@@ -285,22 +397,96 @@ ipcMain.on('overlay', (_e, msg) => {
  * Registered only while you're in a room, so they don't steal the keys from
  * other apps the rest of the time. They work even while a game has focus. */
 const SHORTCUTS = { mute: 'CommandOrControl+Shift+M', deafen: 'CommandOrControl+Shift+D' };
+// The keys can be changed in Settings; only well-formed combos are accepted.
+const KEY = "[A-Z0-9]|F(?:[1-9]|1\\d|2[0-4])|num\\d|Space|Up|Down|Left|Right|Home|End|PageUp|PageDown|Insert|Delete|Capslock|[-=\\[\\]\\\\;',./`]";
+const ACCEL = new RegExp(`^(?:(?:CommandOrControl|Alt|Shift)\\+){0,3}(?:${KEY})$`);
+let registered = [];
 
-ipcMain.handle('shortcuts', (event, on) => {
-  for (const accel of Object.values(SHORTCUTS)) {
+ipcMain.handle('shortcuts', (event, on, map) => {
+  for (const accel of registered) {
     try { globalShortcut.unregister(accel); } catch { /* ignore */ }
   }
+  registered = [];
   if (!on) return [];
+  const wanted = {};
+  for (const action of Object.keys(SHORTCUTS)) {
+    // No map (an older page): the defaults. With a map, a missing action has no shortcut.
+    const accel = map && typeof map === 'object' ? map[action] : SHORTCUTS[action];
+    if (typeof accel === 'string' && ACCEL.test(accel)) wanted[action] = accel;
+  }
   const sender = event.sender;
   const ok = [];
-  for (const [action, accel] of Object.entries(SHORTCUTS)) {
+  for (const [action, accel] of Object.entries(wanted)) {
     try {
-      if (globalShortcut.register(accel, () => { if (!sender.isDestroyed()) sender.send('shortcut', action); })) ok.push(action);
+      if (globalShortcut.register(accel, () => { if (!sender.isDestroyed()) sender.send('shortcut', action); })) {
+        ok.push(action);
+        registered.push(accel);
+      }
     } catch { /* taken by another app: stays an in-app shortcut */ }
   }
   return ok;
 });
 app.on('will-quit', () => globalShortcut.unregisterAll());
+
+/* ------------------------------------------------------------ push-to-talk
+ * Global shortcuts only report a key going down, never coming back up, so
+ * holding a key to talk needs GameShareKeys.exe (native/keys.cpp, Windows):
+ * it reports when the chosen key is held, whatever window has focus. Without
+ * it (other systems, or an install from before it existed) the page handles
+ * the key itself, which works while GameShare is in front. */
+const VK = { Ctrl: 0x11, Alt: 0x12, Shift: 0x10, Mouse4: 0x05, Mouse5: 0x06, Space: 0x20, Up: 0x26, Down: 0x28, Left: 0x25,
+             Right: 0x27, Home: 0x24, End: 0x23, PageUp: 0x21, PageDown: 0x22, Insert: 0x2D, Delete: 0x2E, Capslock: 0x14,
+             '-': 0xBD, '=': 0xBB, '[': 0xDB, ']': 0xDD, '\\': 0xDC, ';': 0xBA, "'": 0xDE, ',': 0xBC, '.': 0xBE, '/': 0xBF, '`': 0xC0 };
+
+function vkOf(name) {
+  if (Object.prototype.hasOwnProperty.call(VK, name)) return VK[name];
+  if (/^[A-Z0-9]$/.test(name)) return name.charCodeAt(0);
+  let m;
+  if ((m = /^F(\d{1,2})$/.exec(name)) && m[1] >= 1 && m[1] <= 24) return 0x70 + Number(m[1]) - 1;
+  if ((m = /^num(\d)$/.exec(name))) return 0x60 + Number(m[1]);
+  return 0;
+}
+
+let pttProc = null;
+
+function stopPtt() {
+  if (!pttProc) return;
+  const p = pttProc;
+  pttProc = null;
+  try { p.stdin.end(); } catch { /* ignore */ }
+  setTimeout(() => { try { p.kill(); } catch { /* ignore */ } }, 500);
+}
+
+ipcMain.handle('ptt-start', (event, combo) => {
+  stopPtt();
+  if (process.platform !== 'win32' || process.arch !== 'x64' || typeof combo !== 'string' || combo.length > 40) return false;
+  const vks = combo.split('+').map(vkOf);
+  if (!vks.length || vks.length > 4 || vks.some((v) => !v)) return false;
+  const base = (global.gsBoot && global.gsBoot.bundledDir) || __dirname;
+  const exe = path.join(base, 'bin', 'win32-x64', 'GameShareKeys.exe')
+    .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+  if (!fs.existsSync(exe)) return false; // installed before push-to-talk existed
+  const sender = event.sender;
+  let proc;
+  try {
+    proc = spawn(exe, vks.map(String), { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  } catch { return false; }
+  pttProc = proc;
+  const tell = (down) => { if (!sender.isDestroyed()) sender.send('ptt', down); };
+  proc.stdout.setEncoding('utf8');
+  proc.stdout.on('data', (text) => {
+    if (pttProc !== proc) return;
+    const last = text.trim().split(/\s+/).pop(); // only the latest state matters
+    if (last === 'D') tell(true); else if (last === 'U') tell(false);
+  });
+  const gone = () => { if (pttProc === proc) { pttProc = null; tell(false); } };
+  proc.on('error', gone);
+  proc.on('exit', gone);
+  return true;
+});
+ipcMain.handle('ptt-stop', () => { stopPtt(); return true; });
+app.on('before-quit', stopPtt);
+app.on('will-quit', () => { if (tray && !tray.isDestroyed()) tray.destroy(); });
 
 /* ---------------------------------------------------------------- app audio
  * GameShareAudio.exe (native/app-audio.cpp) records just the shared app's
