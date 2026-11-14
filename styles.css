@@ -265,8 +265,6 @@ button { -webkit-app-region: no-drag; }
   background: var(--pc);
 }
 .person:hover, .person.menu-open { background: var(--ink-2); }
-.person.me { cursor: default; }
-.person.me:hover { background: transparent; }
 .avatar {
   --pc: var(--ink-4);
   width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
@@ -464,6 +462,19 @@ kbd {
 .pop-watch { width: 100%; margin-top: 4px; }
 .pop-net { margin-top: 8px; color: var(--muted); font-size: 12px; }
 .pop-net:empty { display: none; }
+/* my own row: just the colour swatches */
+.pop:not(.self) .pop-colors, .pop.self .pop-vol-row, .pop.self .pop-mute-row, .pop.self .pop-watch, .pop.self .pop-net { display: none; }
+.pop-colors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 10px 4px 4px; justify-items: center; }
+.swatch {
+  width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  background: var(--sw); transition: transform .12s, box-shadow .12s;
+}
+.swatch:hover:not(:disabled) { transform: scale(1.1); }
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 3px var(--ink-2), 0 0 0 5px var(--sw); }
+.swatch:disabled {
+  cursor: not-allowed; opacity: .3;
+  background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--text) calc(50% - 1.5px), var(--text) calc(50% + 1.5px), transparent calc(50% + 1.5px)), var(--sw);
+}
 
 /* sliders */
 input[type="range"] {
