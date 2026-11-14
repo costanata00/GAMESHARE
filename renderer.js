@@ -2333,6 +2333,7 @@ function renderShareMode() {
     const on = b.dataset.mode === pickerMode;
     b.classList.toggle('active', on);
     b.setAttribute('aria-checked', String(on));
+    b.tabIndex = on ? 0 : -1;
   });
   $('#modeText').textContent = pickerMode === 'video'
     ? tr('For films and videos: steady picture, richer sound. Friends see it about 1 s late.')
@@ -2352,7 +2353,7 @@ async function openPicker() {
   pickerSources = [];
   setShareMode(prefs.shareMode);
   modal.classList.remove('hidden');
-  dialogOpened(modal, modal.querySelector('.tab.active'));
+  dialogOpened(modal, modal.querySelector('.tab[data-kind].active') || modal.querySelector('.tab[data-kind]'));
 
   const done = new Promise((resolve) => { pickerResolve = resolve; });
   await loadSources();
@@ -2417,7 +2418,8 @@ function closePicker(result) {
 }
 
 function renderSources() {
-  document.querySelectorAll('#picker .tab').forEach((t) => {
+  // Only Windows/Screens: Game/Video share the .tab look but aren't source tabs.
+  document.querySelectorAll('#picker .tab[data-kind]').forEach((t) => {
     const on = t.dataset.kind === pickerKind;
     t.classList.toggle('active', on);
     t.setAttribute('aria-selected', String(on));
@@ -4739,7 +4741,7 @@ function init() {
   // Settings pages
   for (const t of document.querySelectorAll('#settingsMenu .menu-tab')) t.addEventListener('click', () => showSettingsTab(t.dataset.page));
   tabKeys($('#settingsMenu .menu-tabs'), (t) => showSettingsTab(t.dataset.page));
-  tabKeys($('#picker .tabs'), (t) => { pickerKind = t.dataset.kind; renderSources(); });
+  tabKeys($('#picker .tabs'), (t) => { pickerKind = t.dataset.kind; renderSources(); renderShareMode(); });
   // Shortcuts: click one, then press the new keys
   for (const b of document.querySelectorAll('.key-btn')) {
     b.addEventListener('click', () => {
@@ -4823,7 +4825,15 @@ function init() {
     updateDuck();
   });
   document.querySelectorAll('#picker .mode').forEach((b) => b.addEventListener('click', () => setShareMode(b.dataset.mode)));
-  $('#modeSuggest').addEventListener('click', () => setShareMode('video'));
+  // The suggestion hides once taken: keep keyboard focus on the Video button.
+  $('#modeSuggest').addEventListener('click', () => { setShareMode('video'); $('#picker .mode[data-mode="video"]').focus(); });
+  // Game/Video is a radio group: arrows move and pick.
+  $('#picker .mode-row .tabs').addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    setShareMode(pickerMode === 'video' ? 'game' : 'video');
+    $(`#picker .mode[data-mode="${pickerMode}"]`).focus();
+  });
   updateControls();
 
   $('#peopleToggle').addEventListener('click', () => setPeoplePanel($('#room').classList.contains('collapsed')));
@@ -4870,9 +4880,11 @@ function init() {
   window.addEventListener('resize', positionPersonMenu);
   $('#peopleList').addEventListener('scroll', positionPersonMenu);
 
-  document.querySelectorAll('#picker .tab').forEach((t) => t.addEventListener('click', () => {
+  document.querySelectorAll('#picker .tab[data-kind]').forEach((t) => t.addEventListener('click', () => {
+    if (pickerKind === t.dataset.kind) return;
     pickerKind = t.dataset.kind;
     renderSources();
+    renderShareMode();
   }));
   $('#audioCheck').addEventListener('change', (e) => { prefs.shareSound = e.target.checked; savePrefs(); });
   $('#pickerCancel').addEventListener('click', () => closePicker(null));
