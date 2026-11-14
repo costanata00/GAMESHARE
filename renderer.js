@@ -23,6 +23,7 @@
 const MAX_LIMIT = 10, MIN_SIZE = 2, DEFAULT_SIZE = 4;
 // Player colours (like couch co-op): one per player, the same on everyone's screen.
 const PLAYER_COLORS = ['#ff6b5b', '#4ea8ff', '#ffc93d', '#3ddc97', '#b98cff', '#ff9447', '#3fd8e6', '#ff75b5', '#a6e35a', '#e0c9a0'];
+const COLOR_NAMES = ['Coral', 'Blue', 'Yellow', 'Green', 'Purple', 'Orange', 'Cyan', 'Pink', 'Lime', 'Sand'];
 const ROOM_PREFIX = 'gameshare-v1-room-';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // Pull a room code out of pasted text such as "Join me on GameShare! Room code: AB3CDE"
@@ -101,7 +102,7 @@ const INVITE_PAGE = '';
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
               micId: '', outId: '', duck: false, duckTo: 40, sbVolume: 60, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null,
-              keys: null, ptt: false, pttKey: '', tray: false, settingsTab: 'voice' };
+              keys: null, ptt: false, pttKey: '', tray: false, settingsTab: 'voice', color: null };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -121,6 +122,7 @@ const prefs = (() => {
   d.keys = { ...DEFAULT_KEYS, ...(d.keys && typeof d.keys === 'object' ? d.keys : null) };
   for (const k of Object.keys(d.keys)) if (typeof d.keys[k] !== 'string' || !(k in DEFAULT_KEYS)) delete d.keys[k];
   if (typeof d.pttKey !== 'string') d.pttKey = '';
+  if (!Number.isInteger(d.color) || d.color < 0 || d.color >= PLAYER_COLORS.length) d.color = null;
   return d;
 })();
 function savePrefs() {
@@ -275,6 +277,24 @@ function setMyColor(i) {
   state.color = i;
   document.documentElement.style.setProperty('--me', PLAYER_COLORS[i]);
   remember();
+}
+
+// The colour I chose myself (click your own name in the panel). Colours a
+// friend is wearing can't be picked; the choice is remembered for next time.
+function whoWears(i) {
+  for (const p of state.peers.values()) if (p.greeted && p.color === i) return p;
+  return null;
+}
+
+function pickColor(i) {
+  if (!Number.isInteger(i) || i < 0 || i >= PLAYER_COLORS.length || !state.peer) return;
+  if (i === state.color || whoWears(i)) { updatePersonMenu(); return; }
+  setMyColor(i);
+  prefs.color = i;
+  savePrefs();
+  broadcast(myState());
+  renderPeople();
+  pushOverlay();
 }
 
 function checkColorClash() {
@@ -2978,10 +2998,10 @@ function makeRow(key, me) {
     status.append(r.net);
     r.hear = el('button', 'hear-btn');
     r.hear.addEventListener('click', (e) => { e.stopPropagation(); toggleLocalMute(key); });
-    li.tabIndex = 0;
-    li.addEventListener('click', () => openPersonMenu(key));
-    li.addEventListener('keydown', (e) => { if (e.target === li && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPersonMenu(key, true); } });
   }
+  li.tabIndex = 0;
+  li.addEventListener('click', () => openPersonMenu(key));
+  li.addEventListener('keydown', (e) => { if (e.target === li && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPersonMenu(key, true); } });
   li.append(av, info, status);
   if (r.hear) li.append(r.hear);
   return r;
@@ -3005,7 +3025,7 @@ function updateRow(r, d) {
   r.name.textContent = d.me ? tr('{name} (you)', { name: d.name }) : d.name;
   r.name.title = r.name.textContent;
   r.host.title = tr('Host: can change the room size');
-  if (!d.me) r.li.title = tr('Volume and options');
+  r.li.title = d.me ? tr('Change your colour') : tr('Volume and options');
   r.host.classList.toggle('hidden', !d.host);
   r.li.classList.toggle('lost', !!d.lost);
   const sub = [];
@@ -3158,21 +3178,26 @@ function renderPeople() {
 let menuKey = null;
 
 function openPersonMenu(key, byKeyboard) {
-  const p = state.peers.get(key);
-  if (!p || !p.greeted) return;
+  const me = key === 'me'; // my own row: pick my colour
+  const p = me ? null : state.peers.get(key);
+  if (!me && (!p || !p.greeted)) return;
   const m = $('#personMenu');
   if (menuKey === key && !m.classList.contains('hidden')) { closePersonMenu(); return; }
   closeSettings();
   menuKey = key;
   const vol = m.querySelector('.pop-vol');
-  vol.value = String(Math.round((p.volume == null ? 1 : p.volume) * 100));
-  vol.style.setProperty('--fill', `${vol.value}%`);
-  vol.setAttribute('aria-label', `${p.name}’s voice volume`);
+  if (p) {
+    vol.value = String(Math.round((p.volume == null ? 1 : p.volume) * 100));
+    vol.style.setProperty('--fill', `${vol.value}%`);
+    vol.setAttribute('aria-label', `${p.name}’s voice volume`);
+  }
+  m.classList.toggle('self', me);
+  m.setAttribute('aria-label', me ? tr('Your colour') : tr('Player options'));
   m.classList.remove('hidden');
   updatePersonMenu();
   positionPersonMenu();
   for (const [k, r] of rows) r.li.classList.toggle('menu-open', k === key);
-  if (byKeyboard) dialogOpened(m, vol); else if (!focusBack.has(m)) focusBack.set(m, r0(key));
+  if (byKeyboard) dialogOpened(m, me ? m.querySelector('.swatch[aria-checked="true"]') : vol); else if (!focusBack.has(m)) focusBack.set(m, r0(key));
 }
 const r0 = (key) => { const r = rows.get(key); return r ? r.li : null; };
 
@@ -3189,9 +3214,28 @@ function positionPersonMenu() {
 
 function updatePersonMenu() {
   if (!menuKey) return;
+  const m = $('#personMenu');
+  if (menuKey === 'me') {
+    const mine = colorOf('me');
+    m.style.setProperty('--pc', mine);
+    const mav = m.querySelector('.pop-avatar');
+    mav.style.setProperty('--pc', mine);
+    mav.textContent = initials(state.name);
+    m.querySelector('.pop-name').textContent = tr('{name} (you)', { name: state.name });
+    m.querySelector('.pop-sub').textContent = tr('Pick your colour');
+    m.querySelectorAll('.swatch').forEach((b, i) => {
+      const on = i === state.color;
+      const by = on ? null : whoWears(i);
+      b.setAttribute('aria-checked', String(on));
+      b.disabled = !!by;
+      b.tabIndex = on ? 0 : -1;
+      b.title = by ? tr('{name} is using this colour', { name: by.name }) : tr(COLOR_NAMES[i]);
+      b.setAttribute('aria-label', by ? `${tr(COLOR_NAMES[i])}: ${b.title}` : tr(COLOR_NAMES[i]));
+    });
+    return;
+  }
   const p = state.peers.get(menuKey);
   if (!p || !p.greeted) { closePersonMenu(); return; }
-  const m = $('#personMenu');
   const color = colorOf(menuKey);
   m.style.setProperty('--pc', color);
   const av = m.querySelector('.pop-avatar');
@@ -4092,7 +4136,7 @@ async function createRoom(fixedCode) {
         ? ((prefs.lastRoom && prefs.lastRoom.code === fixed && prefs.lastRoom.size) || prefs.roomSize)
         : prefs.roomSize;
       state.joinedAt = (r && r.joinedAt) || Date.now();
-      setMyColor(r && Number.isInteger(r.color) ? r.color : 0);
+      setMyColor(r && Number.isInteger(r.color) ? r.color : Number.isInteger(prefs.color) ? prefs.color : 0);
       wirePeer(state.peer);
       enterRoom();
       if (fixed && !r) toast(tr('Room {code} is open again. Friends can join with the same code.', { code }), 'ok');
@@ -4152,7 +4196,7 @@ async function joinRoom(opts) {
   state.code = code;
   state.isHost = false;
   state.rejoinCode = opts && opts.rejoin ? code : null;
-  state.color = r && Number.isInteger(r.color) ? r.color : null; // confirmed when the room answers
+  state.color = r && Number.isInteger(r.color) ? r.color : prefs.color; // my usual colour, if it's free; confirmed when the room answers
   state.joinedAt = (r && r.joinedAt) || Date.now();
   wirePeer(state.peer);
   connectTo(roomId());
@@ -4866,7 +4910,29 @@ function init() {
     e.target.style.setProperty('--fill', `${e.target.value}%`);
     if (p) { p.volume = Number(e.target.value) / 100; p.audio.volume = p.volume; }
   });
-  menu.querySelector('.pop-mute').addEventListener('click', () => { if (menuKey) toggleLocalMute(menuKey); });
+  menu.querySelector('.pop-mute').addEventListener('click', () => { if (menuKey && menuKey !== 'me') toggleLocalMute(menuKey); });
+  // My colour: one swatch per player colour; arrows move between the free ones.
+  const swatches = menu.querySelector('.pop-colors');
+  PLAYER_COLORS.forEach((c, i) => {
+    const b = el('button', 'swatch');
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.style.setProperty('--sw', c);
+    b.addEventListener('click', () => { pickColor(i); b.focus(); });
+    swatches.appendChild(b);
+  });
+  swatches.addEventListener('keydown', (e) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const all = [...swatches.children];
+    let i = all.indexOf(document.activeElement);
+    if (i < 0) i = state.color || 0;
+    for (let n = 0; n < all.length; n++) {
+      i = (i + step + all.length) % all.length;
+      if (!all[i].disabled) { pickColor(i); all[i].focus(); break; }
+    }
+  });
   menu.querySelector('.pop-watch').addEventListener('click', () => {
     const p = state.peers.get(menuKey);
     if (!p) return;

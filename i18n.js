@@ -129,6 +129,12 @@ const PT = {
 
   // ---- player menu
   'Player options': 'Opções do jogador',
+  'Your colour': 'Sua cor',
+  'Pick your colour': 'Escolha sua cor',
+  'Change your colour': 'Trocar sua cor',
+  '{name} is using this colour': '{name} está usando esta cor',
+  'Coral': 'Coral', 'Blue': 'Azul', 'Yellow': 'Amarelo', 'Green': 'Verde', 'Purple': 'Roxo',
+  'Orange': 'Laranja', 'Cyan': 'Ciano', 'Pink': 'Rosa', 'Lime': 'Lima', 'Sand': 'Areia',
   'Voice volume': 'Volume da voz',
   'Mute their voice for me': 'Silenciar essa voz para mim',
   'reconnecting…': 'reconectando…',
