@@ -102,7 +102,7 @@ const INVITE_PAGE = 'https://costanata00.github.io/GAMESHARE/join.html';
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
               micId: '', outId: '', duck: false, duckTo: 40, sbVolume: 60, noiseRemoval: true, overlay: false, overlayCorner: 'top left', stats: false, shareMode: null, lang: 'auto', bitrate: 'auto', updateCheck: true, skipUpdate: null,
-              keys: null, ptt: false, pttKey: '', tray: false, settingsTab: 'voice', color: null };
+              keys: null, ptt: false, pttKey: '', tray: false, settingsTab: 'voice', color: null, mutedWarn: true };
   try {
     Object.assign(d, JSON.parse(localStorage.getItem('gs-prefs') || '{}'));
     // carry over settings from older versions
@@ -3622,6 +3622,7 @@ function updateControls() {
   $('#trayBtn').setAttribute('aria-checked', String(prefs.tray === true));
   renderKeys();
   $('#headphonesBtn').setAttribute('aria-checked', String(state.headphones));
+  $('#mutedWarnBtn').setAttribute('aria-checked', String(prefs.mutedWarn !== false));
   updateDuckUi();
   updateBitrateUi();
   $('#soundsBtn').setAttribute('aria-checked', String(!!prefs.sounds));
@@ -3821,7 +3822,7 @@ function stopMutedWatch() {
 }
 
 function syncMutedWatch() {
-  const want = state.muted && !pttOn() && !!mic.raw && document.body.dataset.view === 'room';
+  const want = prefs.mutedWarn !== false && state.muted && !pttOn() && !!mic.raw && document.body.dataset.view === 'room';
   if (!want) { if (mutedWatch.track) stopMutedWatch(); return; }
   if (mutedWatch.from === mic.raw) return;
   stopMutedWatch();
@@ -4743,6 +4744,12 @@ function init() {
     if (sb.playing) sb.playing.gain.gain.value = prefs.sbVolume / 100;
   });
   $('#headphonesBtn').addEventListener('click', () => setHeadphones(!state.headphones));
+  $('#mutedWarnBtn').addEventListener('click', () => {
+    prefs.mutedWarn = prefs.mutedWarn === false;
+    savePrefs();
+    updateControls();
+    syncMutedWatch();
+  });
   $('#noiseBtn').addEventListener('click', async () => {
     prefs.noiseRemoval = prefs.noiseRemoval === false;
     if (prefs.noiseRemoval) mic.failed = false; // give it another try

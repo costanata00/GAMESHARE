@@ -224,10 +224,10 @@ button { -webkit-app-region: no-drag; }
 .brandmark { display: flex; align-items: center; gap: 9px; font-weight: 700; font-stretch: 112%; color: var(--muted); min-width: 0; }
 .brandmark .logo span { background: var(--muted); }
 
-.room-card { margin: 8px 12px 0; padding: 14px 14px 12px; border-radius: 14px; background: var(--ink-2); }
+.room-card { min-width: 0; margin: 8px 12px 0; padding: 14px 14px 12px; border-radius: 14px; background: var(--ink-2); }
 .room-code {
   font-size: 31px; line-height: 1.05; font-weight: 800; font-stretch: 125%; letter-spacing: .035em;
-  color: var(--text); user-select: text; white-space: nowrap;
+  color: var(--text); user-select: text; white-space: nowrap; overflow: hidden; text-overflow: clip;
 }
 .room-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
 .slots { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -322,20 +322,21 @@ button { -webkit-app-region: no-drag; }
 .net.bad i:nth-child(1) { background: var(--live); }
 
 /* controls at the bottom of the panel */
-.panel-foot { position: relative; display: grid; gap: 8px; padding: 12px; box-shadow: 0 -1px 0 var(--ink-3); }
+.panel-foot { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; box-shadow: 0 -1px 0 var(--ink-3); }
 .share-btn {
-  display: flex; align-items: center; justify-content: center; gap: 9px; height: 46px;
+  display: flex; align-items: center; justify-content: center; gap: 9px; height: 46px; min-width: 0; padding: 0 12px;
   border: 0; border-radius: 12px; cursor: pointer; font-weight: 700; font-size: 15px;
   background: var(--me); color: var(--ink-on-color);
   transition: filter .15s, background .15s, color .15s, box-shadow .15s;
 }
 .share-btn:hover { filter: brightness(1.08); }
+.share-btn .ctrl-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .share-btn.live { background: rgba(255,77,94,.12); color: var(--live); box-shadow: inset 0 0 0 1.5px var(--live); }
 .share-btn.live .i { -webkit-mask-image: var(--i-screen-off); }
-.dock { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.dock { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
 .dock-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  height: 52px; padding: 0 4px; border: 0; border-radius: 10px; cursor: pointer;
+  min-width: 0; height: 52px; padding: 0 4px; border: 0; border-radius: 10px; cursor: pointer;
   background: var(--ink-2); color: var(--text); font-size: 11.5px; font-weight: 600;
   transition: background .15s, color .15s;
 }
@@ -355,7 +356,7 @@ button { -webkit-app-region: no-drag; }
 .dock-btn.nudge { animation: nudge .7s ease-in-out infinite; }
 @keyframes nudge { 50% { background: var(--live); color: #fff; box-shadow: 0 0 0 4px rgba(255,77,94,.25); } }
 #settingsBtn::after, #leaveBtn::after { content: attr(data-label); }
-#settingsBtn::after, #leaveBtn::after { font-size: 11.5px; }
+#settingsBtn::after, #leaveBtn::after { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
 /* collapsed: a slim rail of avatars and icons */
 #room.collapsed .panel-top { flex-direction: column; gap: 10px; padding: 14px 0 4px; }

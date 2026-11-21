@@ -83,7 +83,7 @@ const PT = {
   'Mute everyone’s voice for you. Streams keep playing (Ctrl+Shift+D)':
     'Silenciar a voz de todos só para você. As transmissões continuam tocando (Ctrl+Shift+D)',
   'Hear everyone’s voice again (Ctrl+Shift+D)': 'Voltar a ouvir a voz de todos (Ctrl+Shift+D)',
-  'Settings': 'Configurações',
+  'Settings': 'Ajustes',
   'Leave': 'Sair',
   'Leave the room': 'Sair da sala',
 
@@ -422,6 +422,9 @@ const PT = {
   'Esc or {keys}': 'Esc ou {keys}',
   'Cinema mode': 'Modo cinema',
   'You’re muted. Friends can’t hear you.': 'Você está no mudo. Seus amigos não te ouvem.',
+  'Warn when I talk while muted': 'Avisar quando eu falar no mudo',
+  'The mic button blinks and a note reminds you that friends can’t hear you.':
+    'O botão do microfone pisca e um aviso lembra que seus amigos não te ouvem.',
   'Press {keys} to unmute.': 'Aperte {keys} para reativar.',
 
   // ---- settings: shortcuts, push-to-talk, tray
