@@ -97,7 +97,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 // Shortcuts you can change in Settings. "Ctrl" also means Cmd on a Mac.
 const DEFAULT_KEYS = { mute: 'Ctrl+Shift+M', deafen: 'Ctrl+Shift+D', panel: 'Ctrl+Shift+P', cinema: 'Ctrl+Shift+C' };
 // Web page that opens an invite in the app (see docs/join.html). Empty: invites carry a gameshare:// link.
-const INVITE_PAGE = '';
+const INVITE_PAGE = 'https://costanata00.github.io/GAMESHARE/join.html';
 
 const prefs = (() => {
   const d = { headphones: false, sounds: true, globalKeys: true, quality: '1080p30', shareSound: true, people: true, roomSize: DEFAULT_SIZE, lastSource: null, lastRoom: null,
