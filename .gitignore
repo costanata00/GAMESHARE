@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.log
 roomA.png
+ADMIN.md

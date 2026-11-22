@@ -4,12 +4,22 @@ A small desktop app for groups of 2 to 10 friends: voice chat plus screen sharin
 
 It's peer-to-peer. Audio and video go straight from PC to PC; a free public "matchmaking" server (PeerJS) is only used to introduce you to each other. There is no account and nothing to host.
 
+## Download
+
+Get the latest version from the [releases page](https://github.com/costanata00/GAMESHARE/releases/latest):
+
+- **Windows:** `GameShare.Setup.<version>.exe` installs it; `GameShare.<version>.exe` is portable (no install). Windows SmartScreen may warn because the app isn't code-signed: click **More info → Run anyway**.
+- **Mac:** `GameShare-<version>.dmg`. Because it isn't signed, right-click the app → **Open** the first time. Then allow it under **System Settings → Privacy & Security → Screen Recording** (and Microphone) and reopen it.
+- **Linux:** `GameShare-<version>.AppImage` (make it executable, then run it).
+
+Everyone in a room should use the same version. GameShare tells you when a new one is out (see [Updates](#updates)).
+
 ## How to use it
 
 1. Type your name, pick the **room size** (click the square for the number of players you want, 2 to 10) and click **Create a room**. Click **Copy invite** in the side panel and paste the message to your friends. Not sure your mic works? Click **Test your microphone** on the start screen first: pick the mic and watch the bar move.
-2. Everyone else types (or pastes the whole invite message into) the code box and clicks **Join**. The invite also carries a `gameshare://join/CODE` link: opening it starts GameShare straight in that room. While it's connecting, **Join** turns into **Cancel**. If the room is full they're told so; the host can make it bigger in **Settings → Room size**.
+2. Everyone else types (or pastes the whole invite message into) the code box and clicks **Join**. The invite also carries a `gameshare://join/CODE` link: opening it starts GameShare straight in that room. While it's connecting, **Join** turns into **Cancel**. If the room is full they're told so; the host can make it bigger with **− / +** next to the player count on the room card (or in **Settings → Sharing → Room size**).
 3. Each player gets their own **colour**, the same on everyone's screen: it marks their name, avatar, slot and the banner on their shared screen, and your own buttons use yours. To change yours, click your own name in the side panel and pick one of the colours nobody is using; GameShare remembers it for next time. The squares under the room code show the room's slots: filled for each player, empty for free places.
-4. Click **Share screen**, pick your game window (or a whole screen), choose **Game** or **Video** (see [Watching videos together](#watching-videos-together)), and click **Share** (or press Enter). The picker remembers what you shared and the mode you used last time.
+4. Click **Share screen**, pick your game window (or a whole screen), choose **Game** or **Video** (see [Watching videos together](#watching-videos-together)) and the **Quality** (720p or 1080p, 30 or 60 fps), and click **Share** (or press Enter). The picker remembers what you shared, the mode and the quality you used last time.
 5. While nobody is sharing, the stage shows everyone's avatar, lighting up as they talk. Shared screens fill the space at their real shape; your own preview tucks in beside your friends' screens. Click any screen to make it big, with the rest in a strip at the side. **Full screen** (the corner button, or a double-click) fills your monitor; controls and the mouse pointer hide after a moment, so just move the mouse to get them back. Press Esc to leave full screen.
 6. Hover a share and click **✕** to close it. Your friend stops sending it to you, which saves bandwidth on both ends. Reopen it with **Watch screen** under their name. Closing your own preview hides it without stopping your share.
 7. **Click a player** in the side panel for their options: voice volume, *Mute their voice for me*, open or close their screen, and your connection to them (ping and packet loss; the bars next to their name show it at a glance). The speaker that appears when you hover a player mutes their voice in one click.
@@ -27,7 +37,7 @@ It's peer-to-peer. Audio and video go straight from PC to PC; a free public "mat
 
 **Settings** (bottom of the panel) has four pages and reopens on the one you used last:
 - **Voice:** your microphone (with a level meter: talk to test it), your speakers or headset, *Remove background noise*, *Headphones mode* and *Lower streams while friends talk*.
-- **Sharing:** share quality, **Bitrate** and the room size (host only). (Game or Video mode is picked in the share picker.)
+- **Sharing:** share quality (also in the share picker), **Bitrate** and the room size (host only; also on the room card). (Game or Video mode is picked in the share picker.)
 - **Shortcuts:** change the keys for mute, mute voices, collapsing the panel and cinema mode (click one, press the new keys), whether they work while a game has focus, and **Push-to-talk**.
 - **App:** language, the in-game overlay and its corner, sound effects, *Keep running when I close the window*, updates, and **Copy report** for troubleshooting.
 
