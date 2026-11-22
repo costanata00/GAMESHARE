@@ -93,7 +93,11 @@
         <div id="roomCode" class="room-code" title="Room code">------</div>
         <div class="room-meta">
           <div id="slots" class="slots" aria-hidden="true"></div>
-          <span id="peopleCount" class="slot-count" title="Players in the room / room size">1/4</span>
+          <div id="cardSize" class="card-size">
+            <button id="cardSizeDown" class="card-step" title="Fewer players" aria-label="Fewer players">−</button>
+            <span id="peopleCount" class="slot-count" title="Players in the room / room size">1/4</span>
+            <button id="cardSizeUp" class="card-step" title="More players" aria-label="More players">+</button>
+          </div>
         </div>
         <button id="copyBtn" class="copy-btn" title="Copy an invite with the room code">
           <span class="i i-copy" aria-hidden="true"></span><span class="copy-text">Copy invite</span>
@@ -358,6 +362,14 @@
           <input type="checkbox" id="audioCheck" class="switch-input">
           <span class="switch-ui" aria-hidden="true"></span>
           <span id="audioOptText">Share this app’s sound <small>Only the window you pick. Never your call.</small></span>
+        </label>
+        <label class="picker-quality" title="Share quality">
+          <span>Quality</span>
+          <select id="pickerQuality" aria-label="Share quality">
+            <option value="720p30">720p, 30 fps</option>
+            <option value="1080p30">1080p, 30 fps</option>
+            <option value="1080p60">1080p, 60 fps</option>
+          </select>
         </label>
         <div class="spacer"></div>
         <button id="pickerRefresh" class="btn ghost" title="Look for windows again">Refresh</button>

@@ -197,6 +197,7 @@ const PT = {
   'More players': 'Mais jogadores',
   'Sharing': 'Compartilhamento',
   'Share quality': 'Qualidade da transmissão',
+  'Quality': 'Qualidade',
   'For your own screen. Stays smooth when your PC or connection is busy.':
     'Da sua própria tela. Continua fluida quando seu PC ou sua conexão estão sobrecarregados.',
   'Bitrate': 'Taxa de bits',

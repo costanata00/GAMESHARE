@@ -123,11 +123,16 @@ const prefs = (() => {
   for (const k of Object.keys(d.keys)) if (typeof d.keys[k] !== 'string' || !(k in DEFAULT_KEYS)) delete d.keys[k];
   if (typeof d.pttKey !== 'string') d.pttKey = '';
   if (!Number.isInteger(d.color) || d.color < 0 || d.color >= PLAYER_COLORS.length) d.color = null;
+  // This install, the same across restarts: a friend who comes back under a
+  // new player ID (the app died and they rejoined by hand) replaces their old,
+  // dead copy instead of taking a second seat in the room.
+  if (typeof d.device !== 'string' || !/^[a-z0-9]{8,16}$/.test(d.device)) { d.device = Math.random().toString(36).slice(2, 14); d.newDevice = true; }
   return d;
 })();
 function savePrefs() {
   try { localStorage.setItem('gs-prefs', JSON.stringify(prefs)); } catch { /* ignore */ }
 }
+if (prefs.newDevice) { delete prefs.newDevice; savePrefs(); }
 
 const state = {
   peer: null,
@@ -1137,7 +1142,7 @@ function myState() {
 function helloMsg(extra) {
   return { type: 'hello', name: state.name, muted: state.muted, sharing: !!state.screen, version: state.version,
            color: state.color, joinedAt: state.joinedAt, deafened: state.deafened, boot: state.boot,
-           joining: document.body.dataset.view !== 'room',
+           device: prefs.device, joining: document.body.dataset.view !== 'room',
            peers: [...state.peers.values()].filter((p) => p.greeted && !p.lost).map((p) => p.id), ...extra };
 }
 
@@ -1479,6 +1484,19 @@ async function checkQuiet(p, quiet) {
   if (!alive || quiet > QUIET_HARD_MS) linkLost(p);
 }
 
+// The same install under another player ID: that's this friend's old copy,
+// whose app died. It can't come back, so it goes now (quietly: they're here)
+// instead of holding a seat until GRACE_MS runs out.
+function dropOldCopies(p) {
+  if (!p.device) return;
+  for (const q of [...state.peers.values()]) {
+    if (q === p || q.device !== p.device) continue;
+    log(`${q.name} is back under a new ID: dropping the old one`);
+    q.greeted = false; // no "left" toast
+    removePeer(q.id);
+  }
+}
+
 // A friend's app restarted (it recovered from a crash): what it had asked of
 // me went with it, and calls from before the restart are dead.
 function freshStart(p) {
@@ -1522,6 +1540,8 @@ function onMessage(conn, msg) {
       p.color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < PLAYER_COLORS.length ? msg.color : null;
       p.joinedAt = Number(msg.joinedAt) || 0;
       p.deafened = !!msg.deafened;
+      if (typeof msg.device === 'string') p.device = msg.device.slice(0, 16);
+      dropOldCopies(p);
       if (restarted) freshStart(p);
       // Their share ended while we couldn't hear about it.
       if (!p.sharing) {
@@ -1739,7 +1759,9 @@ function wireDoorman(d) {
   d.on('connection', (conn) => {
     conn.on('data', (msg) => {
       if (!msg || msg.type !== 'hello') return;
-      const members = [...state.peers.values()].filter((p) => p.greeted).map((p) => p.id);
+      // Their old copy (same install, the app died) doesn't count as a seat.
+      const device = typeof msg.device === 'string' ? msg.device.slice(0, 16) : null;
+      const members = [...state.peers.values()].filter((p) => p.greeted && !(device && p.device === device && p.id !== conn.peer)).map((p) => p.id);
       const isMember = members.includes(conn.peer);
       if (!isMember && members.length + 1 >= state.maxPeople) {
         conn.send({ type: 'full', max: state.maxPeople });
@@ -2256,6 +2278,7 @@ function retuneAll() {
 async function startShare() {
   const pick = await openPicker();
   if (!pick) return;
+  await setQuality(pick.quality);
 
   await window.gameshare.chooseSource(pick.id);
   let stream;
@@ -2295,6 +2318,24 @@ async function startShare() {
   broadcast(myState());
   updateControls();
   renderPeople();
+}
+
+// From Settings or the share picker. While sharing, it applies right away.
+async function setQuality(q) {
+  if (!QUALITY[q] || q === state.quality) return;
+  state.quality = q;
+  prefs.quality = q;
+  savePrefs();
+  $('#qualitySelect').value = q;
+  $('#pickerQuality').value = q;
+  updateBitrateUi();
+  if (state.screen) {
+    const track = state.screen.getVideoTracks()[0];
+    if (track) await applyCaptureQuality(track);
+    for (const p of state.peers.values()) p.encSig = null;
+    retuneAll();
+    toast(tr('Quality updated'));
+  }
 }
 
 async function applyCaptureQuality(track) {
@@ -2368,6 +2409,7 @@ async function openPicker() {
   const modal = $('#picker');
   $('#audioOpt').classList.toggle('hidden', !appAudio.supported);
   $('#audioCheck').checked = !!prefs.shareSound;
+  $('#pickerQuality').value = state.quality;
   $('#pickerGo').disabled = true;
   pickerSelected = null;
   pickerSources = [];
@@ -2491,7 +2533,7 @@ function goPicker() {
   prefs.shareMode = pickerMode;
   savePrefs();
   closePicker({ id: pickerSelected, audio: $('#audioCheck').checked && appAudio.supported, mode: pickerMode,
-                name: src ? src.name : '', kind: src ? src.kind : 'window' });
+                quality: $('#pickerQuality').value, name: src ? src.name : '', kind: src ? src.kind : 'window' });
 }
 
 /* ------------------------------------------------------------ stage tiles */
@@ -3279,6 +3321,9 @@ function updateSizeControls() {
   $('#sizeStepper').classList.toggle('locked', !host);
   $('#sizeDown').disabled = !host || state.maxPeople <= Math.max(MIN_SIZE, count);
   $('#sizeUp').disabled = !host || state.maxPeople >= MAX_LIMIT;
+  $('#cardSize').classList.toggle('locked', !host);
+  $('#cardSizeDown').disabled = $('#sizeDown').disabled;
+  $('#cardSizeUp').disabled = $('#sizeUp').disabled;
   $('#sizeHint').textContent = host
     ? tr('How many players fit, up to {n}', { n: MAX_LIMIT })
     : tr('Only {name} can change it', { name: holderName() });
@@ -4850,19 +4895,7 @@ function init() {
     }
   });
   $('#qualitySelect').value = state.quality;
-  $('#qualitySelect').addEventListener('change', async (e) => {
-    state.quality = e.target.value;
-    prefs.quality = state.quality;
-    savePrefs();
-    updateBitrateUi();
-    if (state.screen) {
-      const track = state.screen.getVideoTracks()[0];
-      if (track) await applyCaptureQuality(track);
-      for (const p of state.peers.values()) p.encSig = null;
-      retuneAll();
-      toast(tr('Quality updated'));
-    }
-  });
+  $('#qualitySelect').addEventListener('change', (e) => setQuality(e.target.value));
   $('#duckBtn').addEventListener('click', () => {
     prefs.duck = prefs.duck !== true;
     savePrefs();
@@ -4909,6 +4942,8 @@ function init() {
   });
   $('#sizeDown').addEventListener('click', () => setRoomSize(state.maxPeople - 1));
   $('#sizeUp').addEventListener('click', () => setRoomSize(state.maxPeople + 1));
+  $('#cardSizeDown').addEventListener('click', () => setRoomSize(state.maxPeople - 1));
+  $('#cardSizeUp').addEventListener('click', () => setRoomSize(state.maxPeople + 1));
 
   // Player menu
   const menu = $('#personMenu');
